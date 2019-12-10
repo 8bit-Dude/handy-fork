@@ -5,6 +5,7 @@
 
 #ifndef EEPROM_H
 #define EEPROM_H
+#define min(a,b) (a<b?a:b)
 
 enum {EE_NONE=0, EE_START, EE_DATA, EE_BUSY, EE_WAIT};
 

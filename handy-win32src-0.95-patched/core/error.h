@@ -45,7 +45,8 @@
 #ifndef ERROR_H
 #define ERROR_H
 
-#include <iostream>
+#include <stdio.h>
+using namespace std;
 #include <strstream>
 
 #define MAX_ERROR_MSG	512
