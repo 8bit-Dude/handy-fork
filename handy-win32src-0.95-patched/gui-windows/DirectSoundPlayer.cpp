@@ -156,7 +156,7 @@ bool CDirectSoundPlayer::Start()
 
 		// Now create the multimedia timer object to play sounds without polling
 
-		if((m_TimerID=timeSetEvent(25,0,TimerCallBack,(DWORD)this ,TIME_PERIODIC))==NULL)
+		if((m_TimerID=timeSetEvent(50,0,TimerCallBack,(DWORD)this ,TIME_PERIODIC))==NULL)
 		{
 			gError->Warning("CDirectSoundPlayer::Start - Error: \n timeSetEvent returned an error");
 			m_AudioEnabled=FALSE;
