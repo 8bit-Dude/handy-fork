@@ -70,8 +70,8 @@ BEGIN
         END
         MENUITEM SEPARATOR
         MENUITEM "Use Original Boot Rom",       IDM_OPTIONS_USEBOOTROM
-        MENUITEM SEPARATOR
-        MENUITEM "Lynx &Networking\tCtrl+N",    IDM_OPTIONS_NETWORK
+        //MENUITEM SEPARATOR
+        //MENUITEM "Lynx &Networking\tCtrl+N",    IDM_OPTIONS_NETWORK
         MENUITEM SEPARATOR
         MENUITEM "&Reset\tF3",                  IDM_OPTIONS_RESET
         MENUITEM "&Pause\tF5",                  IDM_OPTIONS_PAUSE
