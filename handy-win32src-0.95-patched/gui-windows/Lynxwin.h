@@ -81,16 +81,21 @@
 
 #endif
 
-
 // Dummy message we send to ourselves to prime the message pump
 #define WM_LYNXWIN_WAKEUP (WM_USER+0x0231)
 
 // Define timer IDs used
 #define HANDY_INFO_TIMER			9741
-#define HANDY_INFO_TIMER_PERIOD		2000
+#define HANDY_INFO_TIMER_PERIOD		500
 
 #define HANDY_JOYSTICK_TIMER		9742
 #define HANDY_JOYSTICK_TIMER_PERIOD	50
+
+#define HANDY_NETWORK_TIMER			9743
+#define HANDY_NETWORK_TIMER_PERIOD	10
+
+#define HANDY_MOUSE_TIMER			9744
+#define HANDY_MOUSE_TIMER_PERIOD	30
 
 //
 // Defined type for the window mode
@@ -135,6 +140,13 @@
 
 #define	DISPLAY_PRESERVE		0x8000
 
+typedef struct packet {
+	unsigned char ID;
+	unsigned char len;
+	unsigned char* data;
+	uint32_t timeout;
+	struct packet* next;
+} packet_t;
 
 class CLynxWindow : public CFrameWnd
 {
@@ -348,9 +360,13 @@ private:
 
 	static void		CALLBACK CLynxWindow::fTimerEventHandler(UINT uID,UINT uMsg,DWORD dwUser,DWORD dw1,DWORD dw2);
 	static void		CLynxWindow::NetworkTxCallback(int data,ULONG objref);
+	static void		CLynxWindow::HubTxCallback(int data, ULONG objref);
 	static UBYTE*	CLynxWindow::DisplayCallback(ULONG objref);
 	void            CLynxWindow::CheckForBootRom(CString &romfile);
 
+	void		HubPushPacket(unsigned char cmd, unsigned char* data, unsigned char len);
+	void		HubPopPacket(unsigned char ID);
+	void		HubTimeoutPacket(void);
 private:
 
 	// Debug window object storage
@@ -365,6 +381,45 @@ private:
 	ULONG		mJoystickYDown;
 
 	KEYCONF		mKeyDefs;
+
+	// 8bit-Hub Joystick states
+	#define HUB_JOY_UP      1
+	#define HUB_JOY_DOWN    2
+	#define HUB_JOY_LEFT    4
+	#define HUB_JOY_RIGHT   8
+	#define HUB_JOY_FIRE1   16
+	#define HUB_JOY_FIRE2   32
+	#define HUB_MOUSE_LEFT  64
+	#define HUB_MOUSE_RIGHT 128
+
+	// 8bit-Hub Communication
+	#define HUB_TIMEOUT    1000  // Milliseconds
+	#define HUB_FILES		 10	 // Number of handles
+	#define HUB_SYS_RESET     1
+	#define HUB_DIR_LS       10  // Todo: Implement for root directory /microSD
+	#define HUB_DIR_MK       11
+	#define HUB_DIR_RM       12
+	#define HUB_DIR_CD       13
+	#define HUB_FIL_OPEN     21
+	#define HUB_FIL_SEEK	 22
+	#define HUB_FIL_READ     23
+	#define HUB_FIL_WRITE    24
+	#define HUB_FIL_CLOSE    25
+	#define HUB_UDP_INIT     30
+	#define HUB_UDP_RECV     31
+	#define HUB_UDP_SEND     32
+
+	packet_t* hubHead = NULL;
+	CFile hubFile[HUB_FILES];
+	unsigned char countID = 0;
+	unsigned char hubJoys[2] = { 255, 255 };
+	unsigned char hubMouse[2] = { 80, 100 };
+	struct sockaddr_in udpServer;
+	struct sockaddr_in udpClient;
+	int	mNetworkEnable;
+	int	mMouseEnable;
+	SOCKET socketDesc;
+	int socketLen;
 
 	CLynxRender	*mDisplayRender;
 	CBitmap		mDisplayBackground;
@@ -391,6 +446,7 @@ private:
 	volatile ULONG mEmulationSpeed;
 	volatile ULONG mFramesPerSecond;
 	volatile ULONG mFrameCount;
+	ULONG	mHubRX,mHubTX,mHubBAD;
 	ULONG	mFrameSkip;
 
 public:

@@ -56,7 +56,7 @@
 static char THIS_FILE[] = __FILE__;
 #endif
 
-#define HANDY_VERSION		"Version 0.98"
+#define HANDY_VERSION		"Version 0.99a"
 #define HANDY_BUILD			"Build ("__DATE__")"
 
 #define REGISTRY_VERSION	"Version 1.0"
@@ -88,9 +88,11 @@ CLynxWindow::CLynxWindow(CString gamefile)
 	mFramesPerSecond=0;
 	mFrameCount=0;
 	mFrameSkip=0;
+	mHubRX=0;
+	mHubTX=0;
+	mHubBAD=0;
 
 	// Init display stuff so it will create correctly
-
 	mDisplayRender=NULL;
 	mDisplayNoPainting=TRUE;
 	mDisplayMode=DISPLAY_WINDOWED|DISPLAY_X1|DISPLAY_NO_ROTATE;
@@ -214,8 +216,26 @@ CLynxWindow::CLynxWindow(CString gamefile)
 	mKeyDefs.key_opt2=mpLynxApp->GetProfileInt(REGISTRY_VERSION,"KeyDefs_OPT2",VK_2);
 	mKeyDefs.key_pause=mpLynxApp->GetProfileInt(REGISTRY_VERSION,"KeyDefs_PAUSE",VK_Q);
 
+	// 8bit-Hub support
+	mKeyDefs.hub1_up = mpLynxApp->GetProfileInt(REGISTRY_VERSION, "Hub1_UP", VK_R);
+	mKeyDefs.hub1_down = mpLynxApp->GetProfileInt(REGISTRY_VERSION, "Hub1_DOWN", VK_F);
+	mKeyDefs.hub1_left = mpLynxApp->GetProfileInt(REGISTRY_VERSION, "Hub1_LEFT", VK_D);
+	mKeyDefs.hub1_right = mpLynxApp->GetProfileInt(REGISTRY_VERSION, "Hub1_RIGHT", VK_G);
+	mKeyDefs.hub1_a = mpLynxApp->GetProfileInt(REGISTRY_VERSION, "Hub1_A", VK_W);
+	mKeyDefs.hub1_b = mpLynxApp->GetProfileInt(REGISTRY_VERSION, "Hub1_B", VK_S);
+
+	mKeyDefs.hub2_up = mpLynxApp->GetProfileInt(REGISTRY_VERSION, "Hub2_UP", VK_I);
+	mKeyDefs.hub2_down = mpLynxApp->GetProfileInt(REGISTRY_VERSION, "Hub2_DOWN", VK_K);
+	mKeyDefs.hub2_left = mpLynxApp->GetProfileInt(REGISTRY_VERSION, "Hub2_LEFT", VK_J);
+	mKeyDefs.hub2_right = mpLynxApp->GetProfileInt(REGISTRY_VERSION, "Hub2_RIGHT", VK_L);
+	mKeyDefs.hub2_a = mpLynxApp->GetProfileInt(REGISTRY_VERSION, "Hub2_A", VK_Y);
+	mKeyDefs.hub2_b = mpLynxApp->GetProfileInt(REGISTRY_VERSION, "Hub2_B", VK_H);
+
 	mInitOK=TRUE;
 	mDisplayNoPainting=FALSE;
+
+	// Set timer for 8bit-hub mouse updates
+	mMouseEnable = SetTimer(HANDY_MOUSE_TIMER, HANDY_MOUSE_TIMER_PERIOD, NULL);
 }
 
 
@@ -260,6 +280,20 @@ BOOL CLynxWindow::DestroyWindow()
 		mpLynxApp->WriteProfileInt(REGISTRY_VERSION,"KeyDefs_OPT1",mKeyDefs.key_opt1);
 		mpLynxApp->WriteProfileInt(REGISTRY_VERSION,"KeyDefs_OPT2",mKeyDefs.key_opt2);
 		mpLynxApp->WriteProfileInt(REGISTRY_VERSION,"KeyDefs_PAUSE",mKeyDefs.key_pause);
+
+		mpLynxApp->WriteProfileInt(REGISTRY_VERSION, "Hub1_UP", mKeyDefs.hub1_up);
+		mpLynxApp->WriteProfileInt(REGISTRY_VERSION, "Hub1_DOWN", mKeyDefs.hub1_down);
+		mpLynxApp->WriteProfileInt(REGISTRY_VERSION, "Hub1_LEFT", mKeyDefs.hub1_left);
+		mpLynxApp->WriteProfileInt(REGISTRY_VERSION, "Hub1_RIGHT", mKeyDefs.hub1_right);
+		mpLynxApp->WriteProfileInt(REGISTRY_VERSION, "Hub1_A", mKeyDefs.hub1_a);
+		mpLynxApp->WriteProfileInt(REGISTRY_VERSION, "Hub1_B", mKeyDefs.hub1_b);
+
+		mpLynxApp->WriteProfileInt(REGISTRY_VERSION, "Hub2_UP", mKeyDefs.hub2_up);
+		mpLynxApp->WriteProfileInt(REGISTRY_VERSION, "Hub2_DOWN", mKeyDefs.hub2_down);
+		mpLynxApp->WriteProfileInt(REGISTRY_VERSION, "Hub2_LEFT", mKeyDefs.hub2_left);
+		mpLynxApp->WriteProfileInt(REGISTRY_VERSION, "Hub2_RIGHT", mKeyDefs.hub2_right);
+		mpLynxApp->WriteProfileInt(REGISTRY_VERSION, "Hub2_A", mKeyDefs.hub2_a);
+		mpLynxApp->WriteProfileInt(REGISTRY_VERSION, "Hub2_B", mKeyDefs.hub2_b);
 
 		mpLynxApp->WriteProfileInt(REGISTRY_VERSION,"DisplayModeMagnification",DisplayModeMagnification());
 		mpLynxApp->WriteProfileInt(REGISTRY_VERSION,"DisplayModeBackground",DisplayModeBkgnd());
@@ -484,6 +518,10 @@ CSystem* CLynxWindow::CreateLynx(CString gamefile)
 		}
 	}
 	while(newsystem==NULL);
+
+	// Link with 8bit-Hub?
+	newsystem->ComLynxCable(TRUE);
+	newsystem->ComLynxTxCallback(HubTxCallback, (ULONG)this);
 
 	return newsystem;
 }
@@ -815,7 +853,6 @@ void CLynxWindow::NetworkTxCallback(int data,ULONG objref)
 	}
 }
 
-
 UBYTE* CLynxWindow::DisplayCallback(ULONG objref)
 {
 	static int frameskipcount=0;
@@ -946,9 +983,9 @@ inline void CLynxWindow::OnPaint()
 void CLynxWindow::OnTimer(UINT nIDEvent)
 {
 	// Abort if no valid Lynx or Display
-	if(mpLynx==NULL || mDisplayRender==NULL) return;
+	if (mpLynx == NULL || mDisplayRender == NULL) return;
 
-	if(nIDEvent==HANDY_INFO_TIMER)
+	if (nIDEvent == HANDY_INFO_TIMER)
 	{
 		// TEST TEST TEST
 //		if(mpNetLynx!=NULL)
@@ -972,23 +1009,35 @@ void CLynxWindow::OnTimer(UINT nIDEvent)
 		//
 		// Display speed information if enabled
 		//
-		if(DisplayModeWindowed())
+		if (DisplayModeWindowed())
 		{
 			CString text;
-			text.Format("%d",mFramesPerSecond);
-			CEdit&	ctlfps=*(CEdit*)mInfoDialog.GetDlgItem(IDC_STATUS_FPS);
+			text.Format("%d", mFramesPerSecond);
+			CEdit&	ctlfps = *(CEdit*)mInfoDialog.GetDlgItem(IDC_STATUS_FPS);
 			ctlfps.SetWindowText(text);
 
-			text.Format("%d",mEmulationSpeed);
-			CEdit&	ctleff=*(CEdit*)mInfoDialog.GetDlgItem(IDC_STATUS_EFF);
+			text.Format("%d", mEmulationSpeed);
+			CEdit&	ctleff = *(CEdit*)mInfoDialog.GetDlgItem(IDC_STATUS_EFF);
 			ctleff.SetWindowText(text);
 
-			text.Format("%d",mFrameSkip);
-			CEdit&	ctlskip=*(CEdit*)mInfoDialog.GetDlgItem(IDC_STATUS_SKIP);
+			text.Format("%d", mFrameSkip);
+			CEdit&	ctlskip = *(CEdit*)mInfoDialog.GetDlgItem(IDC_STATUS_SKIP);
 			ctlskip.SetWindowText(text);
 
-			CSpinButtonCtrl& ctlspeed=*(CSpinButtonCtrl*)mInfoDialog.GetDlgItem(IDC_STATUS_SPIN1);
-			gThrottleMaxPercentage=ctlspeed.GetPos();
+			text.Format("%d", mHubRX);
+			CEdit&	ctlhubrx = *(CEdit*)mInfoDialog.GetDlgItem(IDC_STATUS_HUB_RX);
+			ctlhubrx.SetWindowText(text);
+
+			text.Format("%d", mHubTX);
+			CEdit&	ctlhubtx = *(CEdit*)mInfoDialog.GetDlgItem(IDC_STATUS_HUB_TX);
+			ctlhubtx.SetWindowText(text);
+
+			text.Format("%d", mHubBAD);
+			CEdit&	ctlhubbad = *(CEdit*)mInfoDialog.GetDlgItem(IDC_STATUS_HUB_BAD);
+			ctlhubbad.SetWindowText(text);
+
+			CSpinButtonCtrl& ctlspeed = *(CSpinButtonCtrl*)mInfoDialog.GetDlgItem(IDC_STATUS_SPIN1);
+			gThrottleMaxPercentage = ctlspeed.GetPos();
 		}
 		else
 		{
@@ -996,18 +1045,18 @@ void CLynxWindow::OnTimer(UINT nIDEvent)
 			CDC* fullscnCDC;
 			HDC fullscnHDC;
 			IDirectDrawSurfacePtr surfDesc;
-			surfDesc=((CFullScreenDirectX*)mDisplayRender)->GetFrontSurface();
-			if(surfDesc)
+			surfDesc = ((CFullScreenDirectX*)mDisplayRender)->GetFrontSurface();
+			if (surfDesc)
 			{
 				surfDesc->GetDC(&fullscnHDC);
-				fullscnCDC = CDC::FromHandle (fullscnHDC);
-				sprintf(info,"%%=%03d F=%03d FSkip=%01d",mEmulationSpeed,mFramesPerSecond,mFrameSkip);
-				TextOut(fullscnHDC,0,0,info,strlen(info));
+				fullscnCDC = CDC::FromHandle(fullscnHDC);
+				sprintf(info, "%%=%03d F=%03d FSkip=%01d", mEmulationSpeed, mFramesPerSecond, mFrameSkip);
+				TextOut(fullscnHDC, 0, 0, info, strlen(info));
 				surfDesc->ReleaseDC(fullscnHDC);
 			}
 		}
 	}
-	else if(nIDEvent==HANDY_JOYSTICK_TIMER)
+	else if (nIDEvent == HANDY_JOYSTICK_TIMER)
 	{
 		//
 		// Check joystick buttons in sync with the timer
@@ -1016,9 +1065,9 @@ void CLynxWindow::OnTimer(UINT nIDEvent)
 		static JOYINFOEX	joyinfo;
 
 		// Check buttons
-		joyinfo.dwSize=sizeof(JOYINFOEX);
-		joyinfo.dwFlags=JOY_RETURNBUTTONS|JOY_RETURNX|JOY_RETURNY;
-		if(joyGetPosEx(JOYSTICKID1,&joyinfo)!=JOYERR_NOERROR)
+		joyinfo.dwSize = sizeof(JOYINFOEX);
+		joyinfo.dwFlags = JOY_RETURNBUTTONS | JOY_RETURNX | JOY_RETURNY;
+		if (joyGetPosEx(JOYSTICKID1, &joyinfo) != JOYERR_NOERROR)
 		{
 			// This will disable the joystick
 			OnJoystickMenuSelect();
@@ -1028,129 +1077,152 @@ void CLynxWindow::OnTimer(UINT nIDEvent)
 		else
 		{
 			// Get current button state
-			lynx_buttons=mpLynx->GetButtonData();
+			lynx_buttons = mpLynx->GetButtonData();
 
 			// Button A
-			if(joyinfo.dwButtons&JOY_BUTTON1) lynx_buttons|=BUTTON_B; else lynx_buttons&=BUTTON_B^0xffffffff;
+			if (joyinfo.dwButtons&JOY_BUTTON1) lynx_buttons |= BUTTON_B; else lynx_buttons &= BUTTON_B ^ 0xffffffff;
 			// Button B
-			if(joyinfo.dwButtons&JOY_BUTTON2) lynx_buttons|=BUTTON_A; else lynx_buttons&=BUTTON_A^0xffffffff;
+			if (joyinfo.dwButtons&JOY_BUTTON2) lynx_buttons |= BUTTON_A; else lynx_buttons &= BUTTON_A ^ 0xffffffff;
 			// Option 1
-			if(joyinfo.dwButtons&JOY_BUTTON3) lynx_buttons|=BUTTON_OPT1; else lynx_buttons&=BUTTON_OPT1^0xffffffff;
+			if (joyinfo.dwButtons&JOY_BUTTON3) lynx_buttons |= BUTTON_OPT1; else lynx_buttons &= BUTTON_OPT1 ^ 0xffffffff;
 			// Option 2
-			if(joyinfo.dwButtons&JOY_BUTTON4) lynx_buttons|=BUTTON_OPT2; else lynx_buttons&=BUTTON_OPT2^0xffffffff;
+			if (joyinfo.dwButtons&JOY_BUTTON4) lynx_buttons |= BUTTON_OPT2; else lynx_buttons &= BUTTON_OPT2 ^ 0xffffffff;
 
 			// Read axis's
-			if(joyinfo.dwYpos<mJoystickYDown)
+			if (joyinfo.dwYpos < mJoystickYDown)
 			{
-				switch(DisplayModeRotate())
+				switch (DisplayModeRotate())
 				{
-					case DISPLAY_ROTATE_LEFT:
-						lynx_buttons|=BUTTON_LEFT;
-						lynx_buttons&=BUTTON_RIGHT^0xffffffff;
-						break;
-					case DISPLAY_ROTATE_RIGHT:
-						lynx_buttons|=BUTTON_RIGHT;
-						lynx_buttons&=BUTTON_LEFT^0xffffffff;
-						break;
-					case DISPLAY_NO_ROTATE:
-					default:
-						lynx_buttons|=BUTTON_UP;
-						lynx_buttons&=BUTTON_DOWN^0xffffffff;
-						break;
+				case DISPLAY_ROTATE_LEFT:
+					lynx_buttons |= BUTTON_LEFT;
+					lynx_buttons &= BUTTON_RIGHT ^ 0xffffffff;
+					break;
+				case DISPLAY_ROTATE_RIGHT:
+					lynx_buttons |= BUTTON_RIGHT;
+					lynx_buttons &= BUTTON_LEFT ^ 0xffffffff;
+					break;
+				case DISPLAY_NO_ROTATE:
+				default:
+					lynx_buttons |= BUTTON_UP;
+					lynx_buttons &= BUTTON_DOWN ^ 0xffffffff;
+					break;
 				}
 			}
-			else if(joyinfo.dwYpos>mJoystickYUp)
+			else if (joyinfo.dwYpos > mJoystickYUp)
 			{
-				switch(DisplayModeRotate())
+				switch (DisplayModeRotate())
 				{
-					case DISPLAY_ROTATE_LEFT:
-						lynx_buttons|=BUTTON_RIGHT;
-						lynx_buttons&=BUTTON_LEFT^0xffffffff;
-						break;
-					case DISPLAY_ROTATE_RIGHT:
-						lynx_buttons|=BUTTON_LEFT;
-						lynx_buttons&=BUTTON_RIGHT^0xffffffff;
-						break;
-					case DISPLAY_NO_ROTATE:
-					default:
-						lynx_buttons|=BUTTON_DOWN;
-						lynx_buttons&=BUTTON_UP^0xffffffff;
-						break;
+				case DISPLAY_ROTATE_LEFT:
+					lynx_buttons |= BUTTON_RIGHT;
+					lynx_buttons &= BUTTON_LEFT ^ 0xffffffff;
+					break;
+				case DISPLAY_ROTATE_RIGHT:
+					lynx_buttons |= BUTTON_LEFT;
+					lynx_buttons &= BUTTON_RIGHT ^ 0xffffffff;
+					break;
+				case DISPLAY_NO_ROTATE:
+				default:
+					lynx_buttons |= BUTTON_DOWN;
+					lynx_buttons &= BUTTON_UP ^ 0xffffffff;
+					break;
 				}
 			}
 			else
 			{
-				switch(DisplayModeRotate())
+				switch (DisplayModeRotate())
 				{
-					case DISPLAY_ROTATE_LEFT:
-					case DISPLAY_ROTATE_RIGHT:
-						lynx_buttons&=BUTTON_LEFT^0xffffffff;
-						lynx_buttons&=BUTTON_RIGHT^0xffffffff;
-						break;
-					case DISPLAY_NO_ROTATE:
-					default:
-						lynx_buttons&=BUTTON_UP^0xffffffff;
-						lynx_buttons&=BUTTON_DOWN^0xffffffff;
-						break;
+				case DISPLAY_ROTATE_LEFT:
+				case DISPLAY_ROTATE_RIGHT:
+					lynx_buttons &= BUTTON_LEFT ^ 0xffffffff;
+					lynx_buttons &= BUTTON_RIGHT ^ 0xffffffff;
+					break;
+				case DISPLAY_NO_ROTATE:
+				default:
+					lynx_buttons &= BUTTON_UP ^ 0xffffffff;
+					lynx_buttons &= BUTTON_DOWN ^ 0xffffffff;
+					break;
 				}
 			}
 
-			if(joyinfo.dwXpos>mJoystickXUp)
+			if (joyinfo.dwXpos > mJoystickXUp)
 			{
-				switch(DisplayModeRotate())
+				switch (DisplayModeRotate())
 				{
-					case DISPLAY_ROTATE_LEFT:
-						lynx_buttons|=BUTTON_UP;
-						lynx_buttons&=BUTTON_DOWN^0xffffffff;
-						break;
-					case DISPLAY_ROTATE_RIGHT:
-						lynx_buttons|=BUTTON_DOWN;
-						lynx_buttons&=BUTTON_UP^0xffffffff;
-						break;
-					case DISPLAY_NO_ROTATE:
-					default:
-						lynx_buttons|=BUTTON_RIGHT;
-						lynx_buttons&=BUTTON_LEFT^0xffffffff;
-						break;
+				case DISPLAY_ROTATE_LEFT:
+					lynx_buttons |= BUTTON_UP;
+					lynx_buttons &= BUTTON_DOWN ^ 0xffffffff;
+					break;
+				case DISPLAY_ROTATE_RIGHT:
+					lynx_buttons |= BUTTON_DOWN;
+					lynx_buttons &= BUTTON_UP ^ 0xffffffff;
+					break;
+				case DISPLAY_NO_ROTATE:
+				default:
+					lynx_buttons |= BUTTON_RIGHT;
+					lynx_buttons &= BUTTON_LEFT ^ 0xffffffff;
+					break;
 				}
 			}
-			else if(joyinfo.dwXpos<mJoystickXDown)
+			else if (joyinfo.dwXpos < mJoystickXDown)
 			{
-				switch(DisplayModeRotate())
+				switch (DisplayModeRotate())
 				{
-					case DISPLAY_ROTATE_LEFT:
-						lynx_buttons|=BUTTON_DOWN;
-						lynx_buttons&=BUTTON_UP^0xffffffff;
-						break;
-					case DISPLAY_ROTATE_RIGHT:
-						lynx_buttons|=BUTTON_UP;
-						lynx_buttons&=BUTTON_DOWN^0xffffffff;
-						break;
-					case DISPLAY_NO_ROTATE:
-					default:
-						lynx_buttons|=BUTTON_LEFT;
-						lynx_buttons&=BUTTON_RIGHT^0xffffffff;
-						break;
+				case DISPLAY_ROTATE_LEFT:
+					lynx_buttons |= BUTTON_DOWN;
+					lynx_buttons &= BUTTON_UP ^ 0xffffffff;
+					break;
+				case DISPLAY_ROTATE_RIGHT:
+					lynx_buttons |= BUTTON_UP;
+					lynx_buttons &= BUTTON_DOWN ^ 0xffffffff;
+					break;
+				case DISPLAY_NO_ROTATE:
+				default:
+					lynx_buttons |= BUTTON_LEFT;
+					lynx_buttons &= BUTTON_RIGHT ^ 0xffffffff;
+					break;
 				}
 			}
 			else
 			{
-				switch(DisplayModeRotate())
+				switch (DisplayModeRotate())
 				{
-					case DISPLAY_ROTATE_LEFT:
-					case DISPLAY_ROTATE_RIGHT:
-						lynx_buttons&=BUTTON_UP^0xffffffff;
-						lynx_buttons&=BUTTON_DOWN^0xffffffff;
-						break;
-					case DISPLAY_NO_ROTATE:
-					default:
-						lynx_buttons&=BUTTON_LEFT^0xffffffff;
-						lynx_buttons&=BUTTON_RIGHT^0xffffffff;
-						break;
+				case DISPLAY_ROTATE_LEFT:
+				case DISPLAY_ROTATE_RIGHT:
+					lynx_buttons &= BUTTON_UP ^ 0xffffffff;
+					lynx_buttons &= BUTTON_DOWN ^ 0xffffffff;
+					break;
+				case DISPLAY_NO_ROTATE:
+				default:
+					lynx_buttons &= BUTTON_LEFT ^ 0xffffffff;
+					lynx_buttons &= BUTTON_RIGHT ^ 0xffffffff;
+					break;
 				}
 			}
 			// Send the button data back again
 			mpLynx->SetButtonData(lynx_buttons);
+		}
+	}
+	else if (nIDEvent == HANDY_MOUSE_TIMER)
+	{
+		// Temporary measure: Use joystick #1 to also move 8bit-Hub mouse cursor
+		ULONG lynx_buttons = mpLynx->GetButtonData();
+		if (lynx_buttons & BUTTON_LEFT)  { if (hubMouse[0] > 1)   { hubMouse[0] -= 2; } }
+		if (lynx_buttons & BUTTON_RIGHT) { if (hubMouse[0] < 158) { hubMouse[0] += 2; } }
+		if (lynx_buttons & BUTTON_UP)    { if (hubMouse[1] > 2)   { hubMouse[1] -= 3; } }
+		if (lynx_buttons & BUTTON_DOWN)  { if (hubMouse[1] < 197) { hubMouse[1] += 3; } }
+		if (lynx_buttons & BUTTON_B) { hubJoys[0] &= ~HUB_MOUSE_LEFT; }  else { hubJoys[0] |= HUB_MOUSE_LEFT; }
+		if (lynx_buttons & BUTTON_A) { hubJoys[0] &= ~HUB_MOUSE_RIGHT; } else { hubJoys[0] |= HUB_MOUSE_RIGHT; }
+	}
+	else if (nIDEvent == HANDY_NETWORK_TIMER)
+	{
+		// Check for incoming packets
+		int udpLen;
+		if (socketDesc > 0) {
+			unsigned char udpBuffer[256];
+			while ((udpLen = recvfrom(socketDesc, (char*)udpBuffer, 256, 0, (struct sockaddr *)&udpServer, &socketLen)) && udpLen > 0) {
+				// Store data into packet
+				HubPushPacket(HUB_UDP_RECV, udpBuffer, udpLen);
+			}
 		}
 	}
 }
@@ -2179,13 +2251,28 @@ void CLynxWindow::OnInfoSelect()
 	SetFocus();
 }
 
-
 void CLynxWindow::OnKeyDown(UINT nChar, UINT nRepCnt, UINT nFlags) 
 {
 	ULONG mask=0;
 
 	CFrameWnd::OnKeyDown(nChar, nRepCnt, nFlags);
 
+	// 8bit-Hub support
+	if (nChar == mKeyDefs.hub1_up)    { hubJoys[0] &= ~HUB_JOY_UP; }
+	if (nChar == mKeyDefs.hub1_down)  { hubJoys[0] &= ~HUB_JOY_DOWN; }
+	if (nChar == mKeyDefs.hub1_left)  { hubJoys[0] &= ~HUB_JOY_LEFT; }
+	if (nChar == mKeyDefs.hub1_right) { hubJoys[0] &= ~HUB_JOY_RIGHT; }
+	if (nChar == mKeyDefs.hub1_b)     { hubJoys[0] &= ~HUB_JOY_FIRE1; }
+	if (nChar == mKeyDefs.hub1_a)     { hubJoys[0] &= ~HUB_JOY_FIRE2; }
+
+	if (nChar == mKeyDefs.hub2_up)	  { hubJoys[1] &= ~HUB_JOY_UP; }
+	if (nChar == mKeyDefs.hub2_down)  { hubJoys[1] &= ~HUB_JOY_DOWN; }
+	if (nChar == mKeyDefs.hub2_left)  { hubJoys[1] &= ~HUB_JOY_LEFT; }
+	if (nChar == mKeyDefs.hub2_right) { hubJoys[1] &= ~HUB_JOY_RIGHT; }
+	if (nChar == mKeyDefs.hub2_b)	  { hubJoys[1] &= ~HUB_JOY_FIRE1; }
+	if (nChar == mKeyDefs.hub2_a)	  { hubJoys[1] &= ~HUB_JOY_FIRE2; }
+
+	// Standard joystick port
 	if(nChar==mKeyDefs.key_up)
 	{
 		switch(DisplayModeRotate())
@@ -2293,6 +2380,22 @@ void CLynxWindow::OnKeyUp(UINT nChar, UINT nRepCnt, UINT nFlags)
 
 	CFrameWnd::OnKeyUp(nChar, nRepCnt, nFlags);
 
+	// 8bit-Hub support
+	if (nChar == mKeyDefs.hub1_up)    { hubJoys[0] |= HUB_JOY_UP; }
+	if (nChar == mKeyDefs.hub1_down)  { hubJoys[0] |= HUB_JOY_DOWN; }
+	if (nChar == mKeyDefs.hub1_left)  { hubJoys[0] |= HUB_JOY_LEFT; }
+	if (nChar == mKeyDefs.hub1_right) { hubJoys[0] |= HUB_JOY_RIGHT; }
+	if (nChar == mKeyDefs.hub1_b)     { hubJoys[0] |= HUB_JOY_FIRE1; }
+	if (nChar == mKeyDefs.hub1_a)     { hubJoys[0] |= HUB_JOY_FIRE2; }
+
+	if (nChar == mKeyDefs.hub2_up)	  { hubJoys[1] |= HUB_JOY_UP; }
+	if (nChar == mKeyDefs.hub2_down)  { hubJoys[1] |= HUB_JOY_DOWN; }
+	if (nChar == mKeyDefs.hub2_left)  { hubJoys[1] |= HUB_JOY_LEFT; }
+	if (nChar == mKeyDefs.hub2_right) { hubJoys[1] |= HUB_JOY_RIGHT; }
+	if (nChar == mKeyDefs.hub2_b)	  { hubJoys[1] |= HUB_JOY_FIRE1; }
+	if (nChar == mKeyDefs.hub2_a)     { hubJoys[1] |= HUB_JOY_FIRE2; }
+
+	// Standard joystick port
 	if(nChar==mKeyDefs.key_up)
 	{
 		switch(DisplayModeRotate())
@@ -2397,6 +2500,9 @@ void CLynxWindow::OnKeyUp(UINT nChar, UINT nRepCnt, UINT nFlags)
 
 void CLynxWindow::OnActivateApp(BOOL bActive, DWORD hTask) 
 {
+	// Allow application to run in background
+	bActive = true;
+
 	CFrameWnd::OnActivateApp(bActive, hTask);
 	
 // This isnt required now as direct sound controls the focus automagically
@@ -2491,4 +2597,306 @@ void CLynxWindow::OnSize(UINT nType, int cx, int cy)
 		mpDebugger->Restore();
 	}
 #endif
+}
+
+////////////////////////////////
+//      PACKET functions      //
+////////////////////////////////
+
+void CLynxWindow::HubPushPacket(unsigned char cmd, unsigned char* data, unsigned char len) {
+	// Create new packet
+	packet_t *packet = (packet_t*)malloc(sizeof(packet_t));
+	packet->next = NULL;
+
+	// Assign ID & Timeout
+	if (++countID>15) { countID = 1; }
+	packet->ID = countID;
+	packet->timeout = (clock() * 1000) / CLOCKS_PER_SEC + HUB_TIMEOUT;
+
+	// Copy data to packet
+	packet->len = len+1;
+	packet->data = (unsigned char*)malloc(len+1);
+	packet->data[0] = cmd;
+	memcpy(&packet->data[1], data, len);
+
+	// Append packet at hubTail of linked list
+	if (!hubHead) {
+		hubHead = packet;
+	}
+	else {
+		packet_t *hubTail = hubHead;
+		while (hubTail->next != NULL) {
+			hubTail = hubTail->next;
+		}
+		hubTail->next = packet;
+	}
+}
+
+void CLynxWindow::HubPopPacket(unsigned char ID) {
+	// Remove packet at head of linked list
+	if (hubHead && hubHead->ID == ID) {
+		packet_t* next = hubHead->next;
+		free(hubHead->data); 
+		free(hubHead);
+		hubHead = next;
+	}
+}
+
+void CLynxWindow::HubTimeoutPacket(void) {
+	// Remove packets that have exceeded timeout
+	while (hubHead && ((clock()*1000)/CLOCKS_PER_SEC) > hubHead->timeout) {
+		HubPopPacket(hubHead->ID);
+	}
+}
+
+//////////////////////////////
+//		HUB Commands		//
+//////////////////////////////
+
+void CLynxWindow::HubTxCallback(int data, ULONG objref)
+{
+	static unsigned char packetLen, rxLen, txLen, txData[256];
+	static unsigned char hasHeader, hasID, hasLen, txID = 0, rxID = 0;
+	static unsigned char* rxData;
+	unsigned char i;
+
+	int socket_buffer_size = 65536;
+	u_long nonblocking_enabled = TRUE;
+	static WSADATA w;	// Used to open Windows connection
+	CString filepath;
+
+	// Re-reference Lynx window
+	CLynxWindow *lwin = (CLynxWindow*)objref;
+
+	// Check header
+	if (!hasHeader && data == 170) {
+		hasHeader = 1; 
+		return;
+	}
+
+	// Check ID
+	if (!hasID) {
+		txID = data;
+		hasID = 1; 
+		return;
+	}
+
+	// Check for length
+	if (!hasLen) {
+		packetLen = data;
+		hasLen = 1;
+		txLen = 0;
+		return;
+	}
+
+	// Add data to buffer
+	txData[txLen++] = data;
+
+	// Check if packet was fully received (including extra byte for checksum)
+	if (txLen <= packetLen) { return; }
+
+	// Reset state
+	hasHeader = 0; 
+	hasID = 0;
+	hasLen = 0; 
+
+	// Verify checksum
+	unsigned char checksum = txID;
+	for (unsigned char i = 0; i<packetLen; i++) {
+		checksum += txData[i];
+	}
+	if (txData[packetLen] != checksum) { 
+		lwin->mHubBAD++;
+		return; 
+	}
+
+	// Try to pop last packet
+	lwin->HubPopPacket((txID >> 4));
+
+	// Process receiced data
+	unsigned char tmp;
+	unsigned char* buffer;
+	unsigned int offset;
+	if (packetLen) {
+		// Record stats
+		lwin->mHubTX++;
+
+		// Check command code
+		switch (txData[0]) {
+		case HUB_SYS_RESET:
+			// Reset files, sockets and counters
+			if (lwin->socketDesc) {
+				closesocket(lwin->socketDesc);
+				lwin->socketDesc = 0;
+				WSACleanup();
+			}
+			for (i=0; i<HUB_FILES; i++) {
+				if (lwin->hubFile[i].m_hFile != CFile::hFileNull) {
+					lwin->hubFile[i].Close();
+				}
+			}
+			lwin->mHubBAD = 0;
+			lwin->countID = 0;
+			rxID = 0;
+			break;
+
+		case HUB_FIL_OPEN:
+			// Check if file was previously opened
+			if (lwin->hubFile[txData[1]].m_hFile != CFile::hFileNull) {
+				lwin->hubFile[txData[1]].Close();
+			}
+
+			// Open file (modes are 0:read, 1:write, 2:append)
+			filepath = lwin->mRootPath + "microSD\\" + &txData[3];
+			switch (txData[2]) {
+			case 0:
+				lwin->hubFile[txData[1]].Open(filepath, CFile::modeRead);
+				break;
+			case 1:
+				lwin->hubFile[txData[1]].Open(filepath, CFile::modeCreate | CFile::modeWrite);
+				break;
+			case 2:
+				lwin->hubFile[txData[1]].Open(filepath, CFile::modeWrite);
+				lwin->hubFile[txData[1]].SeekToEnd();
+				break;
+			}
+			break;
+
+		case HUB_FIL_SEEK:
+			// Seek file position (offset from beginning)
+			offset = (txData[3] * 256) + txData[2];
+			if (lwin->hubFile[txData[1]].m_hFile != CFile::hFileNull) {
+				lwin->hubFile[txData[1]].Seek(offset, CFile::begin);
+			}
+			break;
+
+		case HUB_FIL_READ:
+			// Read from file
+			if (lwin->hubFile[txData[1]].m_hFile != CFile::hFileNull) {
+				buffer = (unsigned char*)malloc(txData[2]);
+				if ((tmp = lwin->hubFile[txData[1]].Read(buffer, txData[2])) && tmp > 0) {
+					lwin->HubPushPacket(HUB_FIL_READ, buffer, tmp);
+				}
+				free(buffer);
+			}
+			break;
+
+		case HUB_FIL_WRITE:
+			// Write to file
+			if (lwin->hubFile[txData[1]].m_hFile != CFile::hFileNull) {
+				lwin->hubFile[txData[1]].Write(&txData[2], txLen-3);
+			}
+			break;
+
+		case HUB_FIL_CLOSE:
+			// Close file
+			if (lwin->hubFile[txData[1]].m_hFile != CFile::hFileNull) {
+				lwin->hubFile[txData[1]].Close();
+			}
+			break;
+
+		case HUB_UDP_INIT:
+			// Open windows connection
+			if (WSAStartup(0x0101, &w) != 0) {
+				break;
+			}
+
+			// Open a datagram socket
+			lwin->socketDesc = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+			if (lwin->socketDesc == INVALID_SOCKET) {
+				WSACleanup();
+				break;
+			}
+
+			// Set non-blocking and buffer size
+			ioctlsocket(lwin->socketDesc, FIONBIO, &nonblocking_enabled);
+			if ((setsockopt(lwin->socketDesc, SOL_SOCKET, SO_RCVBUF, (const char *)&socket_buffer_size, sizeof(int))) < 0) {
+				closesocket(lwin->socketDesc);
+				lwin->socketDesc = 0;
+				WSACleanup();
+				break;
+			}
+
+			// Set server settings
+			memset((void *)&lwin->udpServer, '\0', sizeof(struct sockaddr_in));
+			lwin->udpServer.sin_family = AF_INET;
+			lwin->udpServer.sin_addr.S_un.S_un_b.s_b1 = txData[1];
+			lwin->udpServer.sin_addr.S_un.S_un_b.s_b2 = txData[2];
+			lwin->udpServer.sin_addr.S_un.S_un_b.s_b3 = txData[3];
+			lwin->udpServer.sin_addr.S_un.S_un_b.s_b4 = txData[4];
+			lwin->udpServer.sin_port = htons(txData[5] + txData[6] * 256);
+
+			// Set client settings
+			memset((void *)&lwin->udpClient, '\0', sizeof(struct sockaddr_in));
+			lwin->udpClient.sin_family = AF_INET;
+			lwin->udpClient.sin_addr.s_addr = htonl(INADDR_ANY);
+			lwin->udpClient.sin_port = htons(txData[7] + txData[8] * 256);
+
+			// Bind local address to socket
+			if (bind(lwin->socketDesc, (struct sockaddr*)&lwin->udpClient, sizeof(lwin->udpClient)) == -1) {
+				closesocket(lwin->socketDesc);
+				lwin->socketDesc = 0;
+				WSACleanup();
+				break;
+			}
+
+			// Setup timer for socket reads
+			lwin->mNetworkEnable = lwin->SetTimer(HANDY_NETWORK_TIMER, HANDY_NETWORK_TIMER_PERIOD, NULL);
+			break;
+
+		case HUB_UDP_SEND:
+			// Send packet to server
+			if (lwin->socketDesc > 0) {
+				lwin->socketLen = sizeof(struct sockaddr_in);
+				if (sendto(lwin->socketDesc, (char*)&txData[1], (int)(packetLen - 1), 0, (struct sockaddr*)&lwin->udpServer, lwin->socketLen) == -1) {
+					closesocket(lwin->socketDesc);
+					lwin->socketDesc = 0;
+					WSACleanup();
+				}
+			}
+			break;
+		}
+	}
+
+	// Fetch next packet
+	packet_t *packet = lwin->hubHead;
+	if (packet) {
+		rxLen = packet->len;
+		rxData = packet->data;
+		rxID = packet->ID;
+		lwin->mHubRX++;
+	}
+	else {
+		rxLen = 0;
+	}
+
+	// Encode RX/TX ID
+	unsigned char packetID = 0;
+	packetID = (rxID << 4) + (txID & 0x0f);
+
+	// Compute Checksum
+	checksum = packetID;
+	checksum += lwin->hubJoys[0];
+	checksum += lwin->hubJoys[1];
+	checksum += lwin->hubMouse[0];
+	checksum += lwin->hubMouse[1];
+	for (unsigned char i=0; i<rxLen; i++) {
+		checksum += rxData[i];
+	}
+
+	// Send Hub state
+	lwin->mpLynx->ComLynxRxData(170);
+	lwin->mpLynx->ComLynxRxData(packetID);
+	lwin->mpLynx->ComLynxRxData(lwin->hubJoys[0]);
+	lwin->mpLynx->ComLynxRxData(lwin->hubJoys[1]);
+	lwin->mpLynx->ComLynxRxData(lwin->hubMouse[0]);
+	lwin->mpLynx->ComLynxRxData(lwin->hubMouse[1]);
+	lwin->mpLynx->ComLynxRxData(rxLen);
+	for (unsigned char i=0; i<rxLen; i++) {
+		lwin->mpLynx->ComLynxRxData(rxData[i]);
+	}
+	lwin->mpLynx->ComLynxRxData(checksum);
+
+	// Timeout packets
+	lwin->HubTimeoutPacket();
 }

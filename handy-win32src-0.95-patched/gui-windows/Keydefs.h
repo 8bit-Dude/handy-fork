@@ -43,15 +43,51 @@ typedef struct
 	UINT key_opt1;
 	UINT key_opt2;
 	UINT key_pause;
+
+	UINT hub1_up;
+	UINT hub1_down;
+	UINT hub1_left;
+	UINT hub1_right;
+	UINT hub1_a;
+	UINT hub1_b;
+
+	UINT hub2_up;
+	UINT hub2_down;
+	UINT hub2_left;
+	UINT hub2_right;
+	UINT hub2_a;
+	UINT hub2_b;
 }KEYCONF;
 
 // Defined for convenience as windows doesnt bother to define them
 #define	VK_1	'1'
 #define	VK_2	'2'
-#define VK_Z	'Z'
-#define VK_X	'X'
+#define VK_A	'A'
+#define VK_B	'B'
+#define VK_C	'C'
+#define VK_D	'D'
+#define VK_E	'E'
+#define VK_F	'F'
+#define VK_G	'G'
+#define VK_H	'H'
+#define VK_I	'I'
+#define VK_J	'J'
+#define VK_K	'K'
+#define VK_L	'L'
+#define VK_M	'M'
+#define VK_N	'N'
+#define VK_O	'o'
+#define VK_P	'P'
 #define VK_Q	'Q'
-
+#define VK_R	'R'
+#define VK_S	'S'
+#define VK_T	'T'
+#define VK_U	'U'
+#define VK_V	'V'
+#define VK_W	'W'
+#define VK_X	'X'
+#define VK_Y	'Y'
+#define VK_Z	'Z'
 
 class CKeyDefs : public CDialog
 {
@@ -89,6 +125,21 @@ protected:
 	afx_msg void OnKeydefPause();
 	afx_msg void OnKeydefRight();
 	afx_msg void OnKeydefUp();
+
+	afx_msg void OnHub1A();
+	afx_msg void OnHub1B();
+	afx_msg void OnHub1Down();
+	afx_msg void OnHub1Left();
+	afx_msg void OnHub1Right();
+	afx_msg void OnHub1Up();
+
+	afx_msg void OnHub2A();
+	afx_msg void OnHub2B();
+	afx_msg void OnHub2Down();
+	afx_msg void OnHub2Left();
+	afx_msg void OnHub2Right();
+	afx_msg void OnHub2Up();
+
 	virtual BOOL OnInitDialog();
 	//}}AFX_MSG
 	DECLARE_MESSAGE_MAP()

@@ -125,6 +125,21 @@ BEGIN_MESSAGE_MAP(CKeyDefs, CDialog)
 	ON_BN_CLICKED(IDC_KEYDEF_PAUSE, OnKeydefPause)
 	ON_BN_CLICKED(IDC_KEYDEF_RIGHT, OnKeydefRight)
 	ON_BN_CLICKED(IDC_KEYDEF_UP, OnKeydefUp)
+
+	ON_BN_CLICKED(IDC_HUB1_A, OnHub1A)
+	ON_BN_CLICKED(IDC_HUB1_B, OnHub1B)
+	ON_BN_CLICKED(IDC_HUB1_DOWN, OnHub1Down)
+	ON_BN_CLICKED(IDC_HUB1_LEFT, OnHub1Left)
+	ON_BN_CLICKED(IDC_HUB1_RIGHT, OnHub1Right)
+	ON_BN_CLICKED(IDC_HUB1_UP, OnHub1Up)
+
+	ON_BN_CLICKED(IDC_HUB2_A, OnHub2A)
+	ON_BN_CLICKED(IDC_HUB2_B, OnHub2B)
+	ON_BN_CLICKED(IDC_HUB2_DOWN, OnHub2Down)
+	ON_BN_CLICKED(IDC_HUB2_LEFT, OnHub2Left)
+	ON_BN_CLICKED(IDC_HUB2_RIGHT, OnHub2Right)
+	ON_BN_CLICKED(IDC_HUB2_UP, OnHub2Up)
+
 	//}}AFX_MSG_MAP
 END_MESSAGE_MAP()
 
@@ -137,9 +152,29 @@ void CKeyDefs::OnKeydefA()
 	GetKey(&mNewKeys->key_a);
 }
 
+void CKeyDefs::OnHub1A()
+{
+	GetKey(&mNewKeys->hub1_a);
+}
+
+void CKeyDefs::OnHub2A()
+{
+	GetKey(&mNewKeys->hub2_a);
+}
+
 void CKeyDefs::OnKeydefB() 
 {
 	GetKey(&mNewKeys->key_b);
+}
+
+void CKeyDefs::OnHub1B()
+{
+	GetKey(&mNewKeys->hub1_b);
+}
+
+void CKeyDefs::OnHub2B()
+{
+	GetKey(&mNewKeys->hub2_b);
 }
 
 void CKeyDefs::OnKeydefDown() 
@@ -147,12 +182,32 @@ void CKeyDefs::OnKeydefDown()
 	GetKey(&mNewKeys->key_down);
 }
 
+void CKeyDefs::OnHub1Down()
+{
+	GetKey(&mNewKeys->hub1_down);
+}
+
+void CKeyDefs::OnHub2Down()
+{
+	GetKey(&mNewKeys->hub2_down);
+}
+
 void CKeyDefs::OnKeydefLeft() 
 {
 	GetKey(&mNewKeys->key_left);
 }
 
-void CKeyDefs::OnKeydefOpt1() 
+void CKeyDefs::OnHub1Left()
+{
+	GetKey(&mNewKeys->hub1_left);
+}
+
+void CKeyDefs::OnHub2Left()
+{
+	GetKey(&mNewKeys->hub2_left);
+}
+
+void CKeyDefs::OnKeydefOpt1()
 {
 	GetKey(&mNewKeys->key_opt1);
 }
@@ -172,9 +227,29 @@ void CKeyDefs::OnKeydefRight()
 	GetKey(&mNewKeys->key_right);
 }
 
+void CKeyDefs::OnHub1Right()
+{
+	GetKey(&mNewKeys->hub1_right);
+}
+
+void CKeyDefs::OnHub2Right()
+{
+	GetKey(&mNewKeys->hub2_right);
+}
+
 void CKeyDefs::OnKeydefUp() 
 {
 	GetKey(&mNewKeys->key_up);
+}
+
+void CKeyDefs::OnHub1Up()
+{
+	GetKey(&mNewKeys->hub1_up);
+}
+
+void CKeyDefs::OnHub2Up()
+{
+	GetKey(&mNewKeys->hub2_up);
 }
 
 void CKeyDefs::UpdateButtons()
@@ -186,24 +261,72 @@ void CKeyDefs::UpdateButtons()
 	button_tmp=(CButton*)GetDlgItem(IDC_KEYDEF_A);
 	button_tmp->SetWindowText(tmpstr);
 
+	tmpstr.Format("A\n%s", charnames[mNewKeys->hub1_a & 0x00ff]);
+	button_tmp = (CButton*)GetDlgItem(IDC_HUB1_A);
+	button_tmp->SetWindowText(tmpstr);
+
+	tmpstr.Format("A\n%s", charnames[mNewKeys->hub2_a & 0x00ff]);
+	button_tmp = (CButton*)GetDlgItem(IDC_HUB2_A);
+	button_tmp->SetWindowText(tmpstr);
+
 	tmpstr.Format("  B  \n%s",charnames[mNewKeys->key_b&0x00ff]);
 	button_tmp=(CButton*)GetDlgItem(IDC_KEYDEF_B);
+	button_tmp->SetWindowText(tmpstr);
+
+	tmpstr.Format("B\n%s", charnames[mNewKeys->hub1_b & 0x00ff]);
+	button_tmp = (CButton*)GetDlgItem(IDC_HUB1_B);
+	button_tmp->SetWindowText(tmpstr);
+
+	tmpstr.Format("B\n%s", charnames[mNewKeys->hub2_b & 0x00ff]);
+	button_tmp = (CButton*)GetDlgItem(IDC_HUB2_B);
 	button_tmp->SetWindowText(tmpstr);
 
 	tmpstr.Format("  UP \n%s",charnames[mNewKeys->key_up&0x00ff]);
 	button_tmp=(CButton*)GetDlgItem(IDC_KEYDEF_UP);
 	button_tmp->SetWindowText(tmpstr);
 
+	tmpstr.Format("UP\n%s", charnames[mNewKeys->hub1_up & 0x00ff]);
+	button_tmp = (CButton*)GetDlgItem(IDC_HUB1_UP);
+	button_tmp->SetWindowText(tmpstr);
+
+	tmpstr.Format("UP\n%s", charnames[mNewKeys->hub2_up & 0x00ff]);
+	button_tmp = (CButton*)GetDlgItem(IDC_HUB2_UP);
+	button_tmp->SetWindowText(tmpstr);
+
 	tmpstr.Format(" DOWN\n%s",charnames[mNewKeys->key_down&0x00ff]);
 	button_tmp=(CButton*)GetDlgItem(IDC_KEYDEF_DOWN);
+	button_tmp->SetWindowText(tmpstr);
+
+	tmpstr.Format("DN\n%s", charnames[mNewKeys->hub1_down & 0x00ff]);
+	button_tmp = (CButton*)GetDlgItem(IDC_HUB1_DOWN);
+	button_tmp->SetWindowText(tmpstr);
+
+	tmpstr.Format("DN\n%s", charnames[mNewKeys->hub2_down & 0x00ff]);
+	button_tmp = (CButton*)GetDlgItem(IDC_HUB2_DOWN);
 	button_tmp->SetWindowText(tmpstr);
 
 	tmpstr.Format(" LEFT\n%s",charnames[mNewKeys->key_left&0x00ff]);
 	button_tmp=(CButton*)GetDlgItem(IDC_KEYDEF_LEFT);
 	button_tmp->SetWindowText(tmpstr);
 
+	tmpstr.Format("LF\n%s", charnames[mNewKeys->hub1_left & 0x00ff]);
+	button_tmp = (CButton*)GetDlgItem(IDC_HUB1_LEFT);
+	button_tmp->SetWindowText(tmpstr);
+
+	tmpstr.Format("LF\n%s", charnames[mNewKeys->hub2_left & 0x00ff]);
+	button_tmp = (CButton*)GetDlgItem(IDC_HUB2_LEFT);
+	button_tmp->SetWindowText(tmpstr);
+
 	tmpstr.Format("RIGHT\n%s",charnames[mNewKeys->key_right&0x00ff]);
 	button_tmp=(CButton*)GetDlgItem(IDC_KEYDEF_RIGHT);
+	button_tmp->SetWindowText(tmpstr);
+
+	tmpstr.Format("RG\n%s", charnames[mNewKeys->hub1_right & 0x00ff]);
+	button_tmp = (CButton*)GetDlgItem(IDC_HUB1_RIGHT);
+	button_tmp->SetWindowText(tmpstr);
+
+	tmpstr.Format("RG\n%s", charnames[mNewKeys->hub2_right & 0x00ff]);
+	button_tmp = (CButton*)GetDlgItem(IDC_HUB2_RIGHT);
 	button_tmp->SetWindowText(tmpstr);
 
 	tmpstr.Format(" OPT1\n%s",charnames[mNewKeys->key_opt1&0x00ff]);
