@@ -821,7 +821,7 @@ void CMikie::ComLynxTxLoopback(int data)
       if(!mUART_Rx_waiting) mUART_RX_COUNTDOWN=UART_RX_TIME_PERIOD;
 
       // Receive the byte - INSERT into front of queue
-      mUART_Rx_output_ptr=(--mUART_Rx_output_ptr)%UART_MAX_RX_QUEUE;
+      mUART_Rx_output_ptr -= 1;
       mUART_Rx_input_queue[mUART_Rx_output_ptr]=data;
       mUART_Rx_waiting++;
       TRACE_MIKIE2("ComLynxTxLoopback() - input ptr=%02d waiting=%02d",mUART_Rx_input_ptr,mUART_Rx_waiting);

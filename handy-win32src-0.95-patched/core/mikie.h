@@ -97,10 +97,10 @@ class CSystem;
 #define UART_TX_INACTIVE	0x80000000
 #define UART_RX_INACTIVE	0x80000000
 #define UART_BREAK_CODE		0x00008000
-#define	UART_MAX_RX_QUEUE	32
+#define	UART_MAX_RX_QUEUE	256
 #define UART_TX_TIME_PERIOD	(11)
 #define UART_RX_TIME_PERIOD	(11)
-#define UART_RX_NEXT_DELAY	(44)
+#define UART_RX_NEXT_DELAY	(22)
 
 typedef struct {
    UBYTE	backup;
@@ -435,10 +435,10 @@ private:
    void		(*mpUART_TX_CALLBACK)(int data,ULONG objref);
    ULONG		mUART_TX_CALLBACK_OBJECT;
 
-   int			mUART_Rx_input_queue[UART_MAX_RX_QUEUE];
-   unsigned int mUART_Rx_input_ptr;
-   unsigned int mUART_Rx_output_ptr;
-   int			mUART_Rx_waiting;
+   unsigned char mUART_Rx_input_queue[UART_MAX_RX_QUEUE];
+   unsigned char mUART_Rx_input_ptr;
+   unsigned char mUART_Rx_output_ptr;
+   unsigned char mUART_Rx_waiting;
    int			mUART_Rx_framing_error;
    int			mUART_Rx_overun_error;
 
