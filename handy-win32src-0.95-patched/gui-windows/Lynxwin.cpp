@@ -1215,13 +1215,70 @@ void CLynxWindow::OnTimer(UINT nIDEvent)
 	}
 	else if (nIDEvent == HANDY_NETWORK_TIMER)
 	{
-		// Check for incoming packets
-		int udpLen;
-		if (socketDesc > 0) {
-			unsigned char udpBuffer[256];
-			while ((udpLen = recvfrom(socketDesc, (char*)udpBuffer, 256, 0, (struct sockaddr *)&udpServer, &socketLen)) && udpLen > 0) {
-				// Store data into packet
-				HubPushPacket(HUB_UDP_RECV, udpBuffer, udpLen);
+		unsigned char buffer[HUB_PACKET]; int len;
+		unsigned long available;
+
+		// Check for incoming UDP packets
+		for (char i=0; i<HUB_SLOTS; i++) {
+			if (udpSocket[i]) {
+				while ((len = recvfrom(udpSocket[i], (char*)buffer, 256, 0, (struct sockaddr *)&udpServer[i], &udpLen[i])) && len > 0) {
+					// Store data into packet
+					HubPushPacket(HUB_UDP_RECV, i, buffer, len);
+				}
+			}
+		}
+
+		// Check for incoming TCP packets
+		for (char i = 0; i<HUB_SLOTS; i++) {
+			if (tcpSocket[i]) {
+				// Check if there is any data (recv() is blocking)
+				ioctlsocket(tcpSocket[i], FIONREAD, &available);
+				if (available) {
+					// Store data into packet
+					len = recv(tcpSocket[i], (char*)buffer, 256, 0);
+					HubPushPacket(HUB_TCP_RECV, i, buffer, available);
+				}
+			}
+		}
+
+		// Check for incoming WEB packets
+		if (webSocket[0]) {
+			// If socket not open, look for new client
+			if (!webSocket[1]) {
+				webSocket[1] = accept(webSocket[0], NULL, NULL);
+				if (webSocket[1] == INVALID_SOCKET) {
+					webSocket[1] = 0;
+				} else {
+					webTimer = clock() + webTimeout;
+					webRxBuffer[0] = 0;
+					webRxLen = 0;
+				}
+			}
+
+			// If socket open, check timeout and process incoming data
+			if (webSocket[1]) {
+				if (clock() > webTimer) {
+					closesocket(webSocket[1]);
+					webSocket[1] = 0;
+				} else {
+					len = recv(webSocket[1], (char*)buffer, 256, 0);
+					if (len > 0) {
+						for (unsigned int c = 0; c < len; c++) {
+							if (buffer[c] == '\n' || buffer[c] == '\r') {
+								// Forward request?
+								if (!strncmp((char*)webRxBuffer, "GET", 3)) {
+									webRxBuffer[webRxLen++] = 0;
+									HubPushPacket(HUB_WEB_RECV, -1, webRxBuffer, webRxLen);
+								}
+								webRxBuffer[0] = 0;
+								webRxLen = 0;
+							}
+							else {
+								webRxBuffer[webRxLen++] = buffer[c];
+							}
+						}
+					}
+				}
 			}
 		}
 	}
@@ -2603,7 +2660,7 @@ void CLynxWindow::OnSize(UINT nType, int cx, int cy)
 //      PACKET functions      //
 ////////////////////////////////
 
-void CLynxWindow::HubPushPacket(unsigned char cmd, unsigned char* data, unsigned char len) {
+void CLynxWindow::HubPushPacket(unsigned char cmd, signed char slot, unsigned char* data, unsigned char len) {
 	// Create new packet
 	packet_t *packet = (packet_t*)malloc(sizeof(packet_t));
 	packet->next = NULL;
@@ -2614,10 +2671,11 @@ void CLynxWindow::HubPushPacket(unsigned char cmd, unsigned char* data, unsigned
 	packet->timeout = (clock() * 1000) / CLOCKS_PER_SEC + HUB_TIMEOUT;
 
 	// Copy data to packet
-	packet->len = len+1;
-	packet->data = (unsigned char*)malloc(len+1);
+	packet->len = len+2;
+	packet->data = (unsigned char*)malloc(len+2);
 	packet->data[0] = cmd;
-	memcpy(&packet->data[1], data, len);
+	packet->data[1] = slot;
+	memcpy(&packet->data[2], data, len);
 
 	// Append packet at hubTail of linked list
 	if (!hubHead) {
@@ -2653,6 +2711,8 @@ void CLynxWindow::HubTimeoutPacket(void) {
 //		HUB Commands		//
 //////////////////////////////
 
+WSADATA wsaData;	// Used to open Windows connection
+
 void CLynxWindow::HubTxCallback(int data, ULONG objref)
 {
 	static unsigned char packetLen, rxLen, txLen, txData[256];
@@ -2662,7 +2722,6 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 
 	int socket_buffer_size = 65536;
 	u_long nonblocking_enabled = TRUE;
-	static WSADATA w;	// Used to open Windows connection
 	CString filepath;
 
 	// Re-reference Lynx window
@@ -2713,10 +2772,11 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 	// Try to pop last packet
 	lwin->HubPopPacket((txID >> 4));
 
-	// Process receiced data
-	unsigned char tmp;
-	unsigned char* buffer;
+	// Process received data
+	unsigned char count, buffer[HUB_PACKET], slot, len=0;
+	struct addrinfo hints, *result = NULL;
 	unsigned int offset;
+	char port[8];
 	if (packetLen) {
 		// Record stats
 		lwin->mHubTX++;
@@ -2724,13 +2784,25 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 		// Check command code
 		switch (txData[0]) {
 		case HUB_SYS_RESET:
-			// Reset files, sockets and counters
-			if (lwin->socketDesc) {
-				closesocket(lwin->socketDesc);
-				lwin->socketDesc = 0;
-				WSACleanup();
+			// Reset sockets
+			for (char i = 0; i < HUB_SLOTS; i++) {
+				if (lwin->udpSocket[i]) {
+					closesocket(lwin->udpSocket[i]);
+					lwin->udpSocket[i] = 0;
+				}
 			}
-			for (i=0; i<HUB_FILES; i++) {
+			if (lwin->mNetworkEnable) {
+				lwin->KillTimer(lwin->mNetworkEnable);
+				lwin->mNetworkEnable = 0;
+			}
+			if (lwin->socketReady) WSACleanup();
+			lwin->socketReady = false;
+
+			// Reset packets, files and counters
+			while (lwin->hubHead) {
+				lwin->HubPopPacket(lwin->hubHead->ID);
+			}
+			for (i = 0; i < HUB_FILES; i++) {
 				if (lwin->hubFile[i].m_hFile != CFile::hFileNull) {
 					lwin->hubFile[i].Close();
 				}
@@ -2738,6 +2810,26 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			lwin->mHubBAD = 0;
 			lwin->countID = 0;
 			rxID = 0;
+			break;
+
+		case HUB_DIR_LS:
+			// List current directory
+			HANDLE hFind;
+			WIN32_FIND_DATA FindData;
+			hFind = FindFirstFile(lwin->mRootPath + "microSD\\*.*", &FindData);	// .
+			FindNextFile(hFind, &FindData);										// ..
+			count = 0; len = 1;
+			while (count < txData[1] && FindNextFile(hFind, &FindData)) {
+				memcpy(&buffer[len], (unsigned char*)FindData.cFileName, strlen(FindData.cFileName));
+				len += strlen(FindData.cFileName);
+				buffer[len++] = 0;
+				buffer[len++] = (FindData.nFileSizeLow & 0xff);
+				buffer[len++] = (FindData.nFileSizeLow >> 8);
+				count++;
+			}
+			buffer[0] = count;
+			lwin->HubPushPacket(HUB_DIR_LS, -1, buffer, len);
+			FindClose(hFind);
 			break;
 
 		case HUB_FIL_OPEN:
@@ -2772,19 +2864,18 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 
 		case HUB_FIL_READ:
 			// Read from file
-			if (lwin->hubFile[txData[1]].m_hFile != CFile::hFileNull) {
-				buffer = (unsigned char*)malloc(txData[2]);
-				if ((tmp = lwin->hubFile[txData[1]].Read(buffer, txData[2])) && tmp > 0) {
-					lwin->HubPushPacket(HUB_FIL_READ, buffer, tmp);
+			slot = txData[1];
+			if (lwin->hubFile[slot].m_hFile != CFile::hFileNull) {
+				if ((len = lwin->hubFile[slot].Read(buffer, txData[2])) && len > 0) {
+					lwin->HubPushPacket(HUB_FIL_READ, slot, buffer, len);
 				}
-				free(buffer);
 			}
 			break;
 
 		case HUB_FIL_WRITE:
 			// Write to file
 			if (lwin->hubFile[txData[1]].m_hFile != CFile::hFileNull) {
-				lwin->hubFile[txData[1]].Write(&txData[2], txLen-3);
+				lwin->hubFile[txData[1]].Write(&txData[2], txLen - 3);
 			}
 			break;
 
@@ -2795,64 +2886,213 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			}
 			break;
 
-		case HUB_UDP_INIT:
-			// Open windows connection
-			if (WSAStartup(0x0101, &w) != 0) {
-				break;
-			}
+		case HUB_UDP_SLOT:
+			lwin->udpSlot = txData[1];
+			break;
+
+		case HUB_TCP_SLOT:
+			lwin->tcpSlot = txData[1];
+			break;
+
+		case HUB_UDP_OPEN:
+			// Get windows sockets
+			if (!lwin->socketReady) WSAStartup(0x0101, &wsaData);
+			lwin->socketReady = true;
 
 			// Open a datagram socket
-			lwin->socketDesc = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-			if (lwin->socketDesc == INVALID_SOCKET) {
-				WSACleanup();
+			slot = lwin->udpSlot;
+			lwin->udpSocket[slot] = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+			if (lwin->udpSocket[slot] == INVALID_SOCKET) {
 				break;
 			}
 
 			// Set non-blocking and buffer size
-			ioctlsocket(lwin->socketDesc, FIONBIO, &nonblocking_enabled);
-			if ((setsockopt(lwin->socketDesc, SOL_SOCKET, SO_RCVBUF, (const char *)&socket_buffer_size, sizeof(int))) < 0) {
-				closesocket(lwin->socketDesc);
-				lwin->socketDesc = 0;
-				WSACleanup();
+			ioctlsocket(lwin->udpSocket[slot], FIONBIO, &nonblocking_enabled);
+			if ((setsockopt(lwin->udpSocket[slot], SOL_SOCKET, SO_RCVBUF, (const char *)&socket_buffer_size, sizeof(int))) < 0) {
+				closesocket(lwin->udpSocket[slot]);
+				lwin->udpSocket[slot] = 0;
 				break;
 			}
 
 			// Set server settings
-			memset((void *)&lwin->udpServer, '\0', sizeof(struct sockaddr_in));
-			lwin->udpServer.sin_family = AF_INET;
-			lwin->udpServer.sin_addr.S_un.S_un_b.s_b1 = txData[1];
-			lwin->udpServer.sin_addr.S_un.S_un_b.s_b2 = txData[2];
-			lwin->udpServer.sin_addr.S_un.S_un_b.s_b3 = txData[3];
-			lwin->udpServer.sin_addr.S_un.S_un_b.s_b4 = txData[4];
-			lwin->udpServer.sin_port = htons(txData[5] + txData[6] * 256);
+			ZeroMemory(&lwin->udpServer[slot], sizeof(lwin->udpServer[slot]));
+			lwin->udpServer[slot].sin_family = AF_INET;
+			lwin->udpServer[slot].sin_addr.S_un.S_un_b.s_b1 = txData[1];
+			lwin->udpServer[slot].sin_addr.S_un.S_un_b.s_b2 = txData[2];
+			lwin->udpServer[slot].sin_addr.S_un.S_un_b.s_b3 = txData[3];
+			lwin->udpServer[slot].sin_addr.S_un.S_un_b.s_b4 = txData[4];
+			lwin->udpServer[slot].sin_port = htons(txData[5] + txData[6] * 256);
 
 			// Set client settings
-			memset((void *)&lwin->udpClient, '\0', sizeof(struct sockaddr_in));
-			lwin->udpClient.sin_family = AF_INET;
-			lwin->udpClient.sin_addr.s_addr = htonl(INADDR_ANY);
-			lwin->udpClient.sin_port = htons(txData[7] + txData[8] * 256);
+			memset((void *)&lwin->udpClient[slot], '\0', sizeof(struct sockaddr_in));
+			lwin->udpClient[slot].sin_family = AF_INET;
+			lwin->udpClient[slot].sin_addr.s_addr = htonl(INADDR_ANY);
+			lwin->udpClient[slot].sin_port = htons(txData[7] + txData[8] * 256);
 
 			// Bind local address to socket
-			if (bind(lwin->socketDesc, (struct sockaddr*)&lwin->udpClient, sizeof(lwin->udpClient)) == -1) {
-				closesocket(lwin->socketDesc);
-				lwin->socketDesc = 0;
-				WSACleanup();
+			if (bind(lwin->udpSocket[slot], (struct sockaddr*)&lwin->udpClient[slot], sizeof(lwin->udpClient[slot])) == -1) {
+				closesocket(lwin->udpSocket[slot]);
+				lwin->udpSocket[slot] = 0;
 				break;
 			}
 
 			// Setup timer for socket reads
-			lwin->mNetworkEnable = lwin->SetTimer(HANDY_NETWORK_TIMER, HANDY_NETWORK_TIMER_PERIOD, NULL);
+			if (!lwin->mNetworkEnable) {
+				lwin->mNetworkEnable = lwin->SetTimer(HANDY_NETWORK_TIMER, HANDY_NETWORK_TIMER_PERIOD, NULL);
+			}
+			break;
+
+		case HUB_TCP_OPEN:
+			// Get windows sockets
+			if (!lwin->socketReady) WSAStartup(0x0101, &wsaData);
+			lwin->socketReady = true;
+
+			// Open a datagram socket
+			slot = lwin->tcpSlot;
+			lwin->tcpSocket[slot] = socket(AF_UNSPEC, SOCK_STREAM, IPPROTO_TCP);
+			if (lwin->tcpSocket[slot] == INVALID_SOCKET) {
+				break;
+			}
+
+			// Set server settings
+			ZeroMemory(&lwin->tcpServer[slot], sizeof(lwin->tcpServer[slot]));
+			lwin->tcpServer[slot].sin_family = AF_INET;
+			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b1 = txData[1];
+			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b2 = txData[2];
+			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b3 = txData[3];
+			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b4 = txData[4];
+			lwin->tcpServer[slot].sin_port = htons(txData[5] + txData[6] * 256);
+
+			// Try to connect
+			if (connect(lwin->tcpSocket[slot], (struct sockaddr *)&lwin->tcpServer[slot], sizeof(struct sockaddr_in)) < 0) {
+				closesocket(lwin->tcpSocket[slot]);
+				lwin->tcpSocket[slot] = 0;
+				break;
+			}
+
+			// Setup timer for socket reads
+			if (!lwin->mNetworkEnable) {
+				lwin->mNetworkEnable = lwin->SetTimer(HANDY_NETWORK_TIMER, HANDY_NETWORK_TIMER_PERIOD, NULL);
+			}
+			break;
+
+		case HUB_WEB_OPEN:
+			// Get windows sockets
+			if (!lwin->socketReady) WSAStartup(0x0101, &wsaData);
+			lwin->socketReady = true;
+
+			// Open a datagram socket
+			lwin->webSocket[0] = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+			if (lwin->webSocket[0] == INVALID_SOCKET) {
+				break;
+			}
+
+			// Set non-blocking and buffer size
+			ioctlsocket(lwin->webSocket[0], FIONBIO, &nonblocking_enabled);
+
+			// Set server settings
+			ZeroMemory(&lwin->webServer, sizeof(lwin->webServer));
+			lwin->webServer.sin_family = AF_INET;
+			lwin->webServer.sin_addr.s_addr = inet_addr("127.0.0.1");
+			lwin->webServer.sin_port = htons(txData[1] + txData[2] * 256);
+			lwin->webTimeout = txData[3] + txData[4] * 256;
+
+			// Bind and setup listener
+			if (bind(lwin->webSocket[0], (SOCKADDR *)&lwin->webServer, sizeof(lwin->webServer)) == SOCKET_ERROR) {
+				closesocket(lwin->webSocket[0]);
+				break;
+			}
+			if (listen(lwin->webSocket[0], 1) == SOCKET_ERROR) {
+				closesocket(lwin->webSocket[0]);
+				break;
+			}
+			freeaddrinfo(result);
+
+			// Setup timer for socket reads
+			if (!lwin->mNetworkEnable) {
+				lwin->mNetworkEnable = lwin->SetTimer(HANDY_NETWORK_TIMER, HANDY_NETWORK_TIMER_PERIOD, NULL);
+			}
 			break;
 
 		case HUB_UDP_SEND:
 			// Send packet to server
-			if (lwin->socketDesc > 0) {
-				lwin->socketLen = sizeof(struct sockaddr_in);
-				if (sendto(lwin->socketDesc, (char*)&txData[1], (int)(packetLen - 1), 0, (struct sockaddr*)&lwin->udpServer, lwin->socketLen) == -1) {
-					closesocket(lwin->socketDesc);
-					lwin->socketDesc = 0;
-					WSACleanup();
+			slot = lwin->udpSlot;
+			if (lwin->udpSocket[slot] > 0) {
+				lwin->udpLen[slot] = sizeof(struct sockaddr_in);
+				if (sendto(lwin->udpSocket[slot], (char*)&txData[1], (int)(packetLen-1), 0, (struct sockaddr*)&lwin->udpServer[slot], lwin->udpLen[slot]) == -1) {
+					closesocket(lwin->udpSocket[slot]);
+					lwin->udpSocket[slot] = 0;
 				}
+			}
+			break;
+
+		case HUB_TCP_SEND:
+			// Send packet to server
+			slot = lwin->tcpSlot;
+			if (lwin->tcpSocket[slot] > 0) {
+				if (send(lwin->tcpSocket[slot], (char*)&txData[1], (int)(packetLen-1), 0) == -1) {
+					closesocket(lwin->tcpSocket[slot]);
+					lwin->tcpSocket[slot] = 0;
+				}
+			}
+			break;
+
+		case HUB_WEB_HEADER:
+			// Add header to contents
+			if (lwin->webSocket[1] > 0) {
+				memcpy((char*)&lwin->webTxBuffer[lwin->webTxLen], "HTTP/1.1 200 OK\r\nConnection: close\r\n", 36); lwin->webTxLen += 36;
+				memcpy((char*)&lwin->webTxBuffer[lwin->webTxLen], (char*)&txData[1], packetLen-1); lwin->webTxLen += (packetLen-1);
+				memcpy((char*)&lwin->webTxBuffer[lwin->webTxLen], (char*)"\r\n\r\n", 4); lwin->webTxLen += 4;
+				//send(lwin->webSocket[1], (char*)lwin->webTxBuffer, (int)lwin->webTxLen, 0);
+				//lwin->webTxLen = 0;
+			}
+			break;
+
+		case HUB_WEB_BODY:
+			// Add body to contents
+			if (lwin->webSocket[1] > 0) {
+				memcpy((char*)&lwin->webTxBuffer[lwin->webTxLen], (char*)&txData[1], packetLen - 1); lwin->webTxLen += (packetLen - 1);
+				//send(lwin->webSocket[1], (char*)lwin->webTxBuffer, (int)lwin->webTxLen, 0);
+				//lwin->webTxLen = 0;
+			}
+			break;
+
+		case HUB_WEB_SEND:
+			// Send to client and close connection
+			if (lwin->webSocket[1] > 0) {
+				memcpy((char*)&lwin->webTxBuffer[lwin->webTxLen], (char*)"\r\n\r\n", 4); lwin->webTxLen += 4;
+				send(lwin->webSocket[1], (char*)lwin->webTxBuffer, (int)lwin->webTxLen, 0);
+				closesocket(lwin->webSocket[1]);
+				lwin->webSocket[1] = 0;
+				lwin->webTxLen = 0;
+			}
+			break;
+
+		case HUB_UDP_CLOSE:
+			slot = lwin->udpSlot;
+			if (lwin->udpSocket[slot] > 0) {
+				closesocket(lwin->udpSocket[slot]);
+				lwin->udpSocket[slot] = 0;
+			}
+			break;
+
+		case HUB_TCP_CLOSE:
+			slot = lwin->tcpSlot;
+			if (lwin->tcpSocket[slot] > 0) {
+				closesocket(lwin->tcpSocket[slot]);
+				lwin->tcpSocket[slot] = 0;
+			}
+			break;
+
+		case HUB_WEB_CLOSE:
+			// Close both incoming and outgoing sockets
+			if (lwin->webSocket[0] > 0) {
+				closesocket(lwin->webSocket[0]);
+				lwin->webSocket[0] = 0;
+			}
+			if (lwin->webSocket[1] > 0) {
+				closesocket(lwin->webSocket[1]);
+				lwin->webSocket[1] = 0;
 			}
 			break;
 		}
@@ -2878,6 +3118,8 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 	checksum = packetID;
 	checksum += lwin->hubJoys[0];
 	checksum += lwin->hubJoys[1];
+	checksum += lwin->hubJoys[2];
+	checksum += lwin->hubJoys[3];
 	checksum += lwin->hubMouse[0];
 	checksum += lwin->hubMouse[1];
 	for (unsigned char i=0; i<rxLen; i++) {
@@ -2889,6 +3131,8 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 	lwin->mpLynx->ComLynxRxData(packetID);
 	lwin->mpLynx->ComLynxRxData(lwin->hubJoys[0]);
 	lwin->mpLynx->ComLynxRxData(lwin->hubJoys[1]);
+	lwin->mpLynx->ComLynxRxData(lwin->hubJoys[2]);
+	lwin->mpLynx->ComLynxRxData(lwin->hubJoys[3]);
 	lwin->mpLynx->ComLynxRxData(lwin->hubMouse[0]);
 	lwin->mpLynx->ComLynxRxData(lwin->hubMouse[1]);
 	lwin->mpLynx->ComLynxRxData(rxLen);

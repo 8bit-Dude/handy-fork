@@ -64,6 +64,7 @@
 #include "../core/system.h"
 #include "netobj.h"
 #include "debugger.h"
+#include <ws2tcpip.h>
 
 #ifdef TRACE_LYNXWIN
 
@@ -364,7 +365,7 @@ private:
 	static UBYTE*	CLynxWindow::DisplayCallback(ULONG objref);
 	void            CLynxWindow::CheckForBootRom(CString &romfile);
 
-	void		HubPushPacket(unsigned char cmd, unsigned char* data, unsigned char len);
+	void		HubPushPacket(unsigned char cmd, signed char slot, unsigned char* data, unsigned char len);
 	void		HubPopPacket(unsigned char ID);
 	void		HubTimeoutPacket(void);
 private:
@@ -394,32 +395,55 @@ private:
 
 	// 8bit-Hub Communication
 	#define HUB_TIMEOUT    1000  // Milliseconds
-	#define HUB_FILES		 10	 // Number of handles
+	#define HUB_FILES		 16	 // Number of file handles
+	#define HUB_SLOTS		 16	 // Number of tcp/udp handles
+	#define HUB_PACKET		256  // Max. byte size of packet
 	#define HUB_SYS_RESET     1
-	#define HUB_DIR_LS       10  // Todo: Implement for root directory /microSD
+	#define HUB_DIR_LS       10
 	#define HUB_DIR_MK       11
 	#define HUB_DIR_RM       12
 	#define HUB_DIR_CD       13
 	#define HUB_FIL_OPEN     21
-	#define HUB_FIL_SEEK	 22
+	#define HUB_FIL_SEEK     22
 	#define HUB_FIL_READ     23
 	#define HUB_FIL_WRITE    24
 	#define HUB_FIL_CLOSE    25
-	#define HUB_UDP_INIT     30
+	#define HUB_UDP_OPEN     30
 	#define HUB_UDP_RECV     31
 	#define HUB_UDP_SEND     32
+	#define HUB_UDP_CLOSE    33
+	#define HUB_UDP_SLOT     34
+	#define HUB_TCP_OPEN     40
+	#define HUB_TCP_RECV     41
+	#define HUB_TCP_SEND     42
+	#define HUB_TCP_CLOSE    43
+	#define HUB_TCP_SLOT     44
+	#define HUB_WEB_OPEN     50
+	#define HUB_WEB_RECV     51
+	#define HUB_WEB_HEADER   52
+	#define HUB_WEB_BODY     53
+	#define HUB_WEB_SEND	 54
+	#define HUB_WEB_CLOSE    55
 
+	unsigned char hubJoys[4] = { 255, 255, 255, 255 };
+	unsigned char hubMouse[2] = { 80, 100 };
 	packet_t* hubHead = NULL;
 	CFile hubFile[HUB_FILES];
 	unsigned char countID = 0;
-	unsigned char hubJoys[2] = { 255, 255 };
-	unsigned char hubMouse[2] = { 80, 100 };
-	struct sockaddr_in udpServer;
-	struct sockaddr_in udpClient;
-	int	mNetworkEnable;
-	int	mMouseEnable;
-	SOCKET socketDesc;
-	int socketLen;
+	boolean socketReady = false;
+	struct sockaddr_in tcpServer[HUB_SLOTS], tcpClient[HUB_SLOTS];
+	struct sockaddr_in udpServer[HUB_SLOTS], udpClient[HUB_SLOTS];
+	SOCKET tcpSocket[HUB_SLOTS] = { NULL };
+	SOCKET udpSocket[HUB_SLOTS] = { NULL };
+	int tcpLen[HUB_SLOTS], udpLen[HUB_SLOTS];
+	unsigned char tcpSlot = 0, udpSlot = 0;
+	struct sockaddr_in webServer;
+	SOCKET webSocket[2] = { NULL };	 // Server and Client
+	unsigned char webRxBuffer[256], webTxBuffer[65792];
+	unsigned int webRxLen, webTxLen, webTimeout;
+	clock_t webTimer;
+	int	mNetworkEnable = NULL;
+	int	mMouseEnable = NULL;
 
 	CLynxRender	*mDisplayRender;
 	CBitmap		mDisplayBackground;
