@@ -399,6 +399,7 @@ private:
 	#define HUB_SLOTS		 16	 // Number of tcp/udp handles
 	#define HUB_PACKET		256  // Max. byte size of packet
 	#define HUB_SYS_RESET     1
+	#define HUB_SYS_IP		  2
 	#define HUB_DIR_LS       10
 	#define HUB_DIR_MK       11
 	#define HUB_DIR_RM       12
@@ -431,13 +432,13 @@ private:
 	CFile hubFile[HUB_FILES];
 	unsigned char countID = 0;
 	boolean socketReady = false;
+	char* localip;
 	struct sockaddr_in tcpServer[HUB_SLOTS], tcpClient[HUB_SLOTS];
 	struct sockaddr_in udpServer[HUB_SLOTS], udpClient[HUB_SLOTS];
 	SOCKET tcpSocket[HUB_SLOTS] = { NULL };
 	SOCKET udpSocket[HUB_SLOTS] = { NULL };
 	int tcpLen[HUB_SLOTS], udpLen[HUB_SLOTS];
 	unsigned char tcpSlot = 0, udpSlot = 0;
-	struct sockaddr_in webServer;
 	SOCKET webSocket[2] = { NULL };	 // Server and Client
 	unsigned char webRxBuffer[256], webTxBuffer[65792];
 	unsigned int webRxLen, webTxLen, webTimeout;

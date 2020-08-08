@@ -2773,10 +2773,11 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 	lwin->HubPopPacket((txID >> 4));
 
 	// Process received data
-	unsigned char count, buffer[HUB_PACKET], slot, len=0;
-	struct addrinfo hints, *result = NULL;
 	unsigned int offset;
-	char port[8];
+	unsigned char count, buffer[HUB_PACKET], slot, len=0;
+	struct sockaddr_in webServer;
+	struct hostent *phe;
+	struct in_addr addr;
 	if (packetLen) {
 		// Record stats
 		lwin->mHubTX++;
@@ -2790,13 +2791,20 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 					closesocket(lwin->udpSocket[i]);
 					lwin->udpSocket[i] = 0;
 				}
+				if (lwin->tcpSocket[i]) {
+					closesocket(lwin->tcpSocket[i]);
+					lwin->tcpSocket[i] = 0;
+				}
 			}
+			if (lwin->socketReady) WSACleanup();
+			WSAStartup(0x0101, &wsaData);
+			lwin->socketReady = true;
+
+			// Reset network timer
 			if (lwin->mNetworkEnable) {
 				lwin->KillTimer(lwin->mNetworkEnable);
 				lwin->mNetworkEnable = 0;
 			}
-			if (lwin->socketReady) WSACleanup();
-			lwin->socketReady = false;
 
 			// Reset packets, files and counters
 			while (lwin->hubHead) {
@@ -2810,6 +2818,19 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			lwin->mHubBAD = 0;
 			lwin->countID = 0;
 			rxID = 0;
+
+			// Get local ip address
+			lwin->localip = "\0";
+			if (gethostname((char*)buffer, sizeof(buffer)) == SOCKET_ERROR) break;
+			phe = gethostbyname((char*)buffer);
+			if (phe == 0) break;
+			i = 0; while (phe->h_addr_list[i] != 0)
+				memcpy(&addr, phe->h_addr_list[i++], sizeof(struct in_addr));
+			lwin->localip = inet_ntoa(addr);
+			break;
+
+		case HUB_SYS_IP:
+			lwin->HubPushPacket(HUB_SYS_IP, -1, (unsigned char*)lwin->localip, strlen(lwin->localip));
 			break;
 
 		case HUB_DIR_LS:
@@ -2895,10 +2916,6 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			break;
 
 		case HUB_UDP_OPEN:
-			// Get windows sockets
-			if (!lwin->socketReady) WSAStartup(0x0101, &wsaData);
-			lwin->socketReady = true;
-
 			// Open a datagram socket
 			slot = lwin->udpSlot;
 			lwin->udpSocket[slot] = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -2943,10 +2960,6 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			break;
 
 		case HUB_TCP_OPEN:
-			// Get windows sockets
-			if (!lwin->socketReady) WSAStartup(0x0101, &wsaData);
-			lwin->socketReady = true;
-
 			// Open a datagram socket
 			slot = lwin->tcpSlot;
 			lwin->tcpSocket[slot] = socket(AF_UNSPEC, SOCK_STREAM, IPPROTO_TCP);
@@ -2961,7 +2974,7 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b2 = txData[2];
 			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b3 = txData[3];
 			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b4 = txData[4];
-			lwin->tcpServer[slot].sin_port = htons(txData[5] + txData[6] * 256);
+			lwin->tcpServer[slot].sin_port = htons(txData[5] + txData[6]*256);
 
 			// Try to connect
 			if (connect(lwin->tcpSocket[slot], (struct sockaddr *)&lwin->tcpServer[slot], sizeof(struct sockaddr_in)) < 0) {
@@ -2977,36 +2990,33 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			break;
 
 		case HUB_WEB_OPEN:
-			// Get windows sockets
-			if (!lwin->socketReady) WSAStartup(0x0101, &wsaData);
-			lwin->socketReady = true;
-
 			// Open a datagram socket
 			lwin->webSocket[0] = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 			if (lwin->webSocket[0] == INVALID_SOCKET) {
 				break;
 			}
 
-			// Set non-blocking and buffer size
+			// Set non-blocking and time-out
 			ioctlsocket(lwin->webSocket[0], FIONBIO, &nonblocking_enabled);
-
-			// Set server settings
-			ZeroMemory(&lwin->webServer, sizeof(lwin->webServer));
-			lwin->webServer.sin_family = AF_INET;
-			lwin->webServer.sin_addr.s_addr = inet_addr("127.0.0.1");
-			lwin->webServer.sin_port = htons(txData[1] + txData[2] * 256);
 			lwin->webTimeout = txData[3] + txData[4] * 256;
 
+			// Set server settings
+			ZeroMemory(&webServer, sizeof(webServer));
+			webServer.sin_family = AF_INET;
+			webServer.sin_addr.s_addr = inet_addr(lwin->localip);
+			webServer.sin_port = htons(txData[1] + txData[2] * 256);
+
 			// Bind and setup listener
-			if (bind(lwin->webSocket[0], (SOCKADDR *)&lwin->webServer, sizeof(lwin->webServer)) == SOCKET_ERROR) {
+			if (bind(lwin->webSocket[0], (SOCKADDR *)&webServer, sizeof(webServer)) == SOCKET_ERROR) {
 				closesocket(lwin->webSocket[0]);
+				lwin->webSocket[0] = 0;
 				break;
 			}
 			if (listen(lwin->webSocket[0], 1) == SOCKET_ERROR) {
 				closesocket(lwin->webSocket[0]);
+				lwin->webSocket[0] = 0;
 				break;
 			}
-			freeaddrinfo(result);
 
 			// Setup timer for socket reads
 			if (!lwin->mNetworkEnable) {
