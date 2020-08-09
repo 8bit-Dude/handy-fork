@@ -1252,6 +1252,7 @@ void CLynxWindow::OnTimer(UINT nIDEvent)
 					webTimer = clock() + webTimeout;
 					webRxBuffer[0] = 0;
 					webRxLen = 0;
+					webBusy = false;
 				}
 			}
 
@@ -1260,15 +1261,19 @@ void CLynxWindow::OnTimer(UINT nIDEvent)
 				if (clock() > webTimer) {
 					closesocket(webSocket[1]);
 					webSocket[1] = 0;
-				} else {
+					webRxLen = 0;
+					webBusy = false;
+				} else
+				if (!webBusy) {
 					len = recv(webSocket[1], (char*)buffer, 256, 0);
 					if (len > 0) {
-						for (unsigned int c = 0; c < len; c++) {
+						for (unsigned int c=0; c<len; c++) {
 							if (buffer[c] == '\n' || buffer[c] == '\r') {
 								// Forward request?
 								if (!strncmp((char*)webRxBuffer, "GET", 3)) {
 									webRxBuffer[webRxLen++] = 0;
 									HubPushPacket(HUB_WEB_RECV, -1, webRxBuffer, webRxLen);
+									webBusy = true;
 								}
 								webRxBuffer[0] = 0;
 								webRxLen = 0;
@@ -2999,6 +3004,7 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			// Set non-blocking and time-out
 			ioctlsocket(lwin->webSocket[0], FIONBIO, &nonblocking_enabled);
 			lwin->webTimeout = txData[3] + txData[4] * 256;
+			lwin->webBusy = false;
 
 			// Set server settings
 			ZeroMemory(&webServer, sizeof(webServer));
@@ -3072,9 +3078,8 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			if (lwin->webSocket[1] > 0) {
 				memcpy((char*)&lwin->webTxBuffer[lwin->webTxLen], (char*)"\r\n\r\n", 4); lwin->webTxLen += 4;
 				send(lwin->webSocket[1], (char*)lwin->webTxBuffer, (int)lwin->webTxLen, 0);
-				closesocket(lwin->webSocket[1]);
-				lwin->webSocket[1] = 0;
 				lwin->webTxLen = 0;
+				lwin->webBusy = false;
 			}
 			break;
 

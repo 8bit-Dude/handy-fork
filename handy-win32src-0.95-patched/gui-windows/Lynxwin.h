@@ -426,10 +426,10 @@ private:
 	#define HUB_WEB_SEND	 54
 	#define HUB_WEB_CLOSE    55
 
+	// Hub management
 	unsigned char hubJoys[4] = { 255, 255, 255, 255 };
 	unsigned char hubMouse[2] = { 80, 100 };
 	packet_t* hubHead = NULL;
-	CFile hubFile[HUB_FILES];
 	unsigned char countID = 0;
 	boolean socketReady = false;
 	char* localip;
@@ -442,7 +442,11 @@ private:
 	SOCKET webSocket[2] = { NULL };	 // Server and Client
 	unsigned char webRxBuffer[256], webTxBuffer[65792];
 	unsigned int webRxLen, webTxLen, webTimeout;
+	boolean webBusy = false;
 	clock_t webTimer;
+	CFile hubFile[HUB_FILES];
+
+	// Hub timers
 	int	mNetworkEnable = NULL;
 	int	mMouseEnable = NULL;
 
