@@ -2779,6 +2779,7 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 
 	// Process received data
 	unsigned int offset;
+	unsigned long length;
 	unsigned char count, buffer[HUB_PACKET], slot, len=0;
 	struct sockaddr_in webServer;
 	struct hostent *phe;
@@ -2858,7 +2859,7 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			FindClose(hFind);
 			break;
 
-		case HUB_FIL_OPEN:
+		case HUB_FILE_OPEN:
 			// Check if file was previously opened
 			if (lwin->hubFile[txData[1]].m_hFile != CFile::hFileNull) {
 				lwin->hubFile[txData[1]].Close();
@@ -2878,9 +2879,14 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 				lwin->hubFile[txData[1]].SeekToEnd();
 				break;
 			}
+
+			// Send back file size
+			length = lwin->hubFile[txData[1]].GetLength();
+			memcpy(buffer, (char*)&length, 4);
+			lwin->HubPushPacket(HUB_FILE_OPEN, txData[1], buffer, 4);
 			break;
 
-		case HUB_FIL_SEEK:
+		case HUB_FILE_SEEK:
 			// Seek file position (offset from beginning)
 			offset = (txData[3] * 256) + txData[2];
 			if (lwin->hubFile[txData[1]].m_hFile != CFile::hFileNull) {
@@ -2888,24 +2894,24 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			}
 			break;
 
-		case HUB_FIL_READ:
+		case HUB_FILE_READ:
 			// Read from file
 			slot = txData[1];
 			if (lwin->hubFile[slot].m_hFile != CFile::hFileNull) {
 				if ((len = lwin->hubFile[slot].Read(buffer, txData[2])) && len > 0) {
-					lwin->HubPushPacket(HUB_FIL_READ, slot, buffer, len);
+					lwin->HubPushPacket(HUB_FILE_READ, slot, buffer, len);
 				}
 			}
 			break;
 
-		case HUB_FIL_WRITE:
+		case HUB_FILE_WRITE:
 			// Write to file
 			if (lwin->hubFile[txData[1]].m_hFile != CFile::hFileNull) {
 				lwin->hubFile[txData[1]].Write(&txData[2], txLen - 3);
 			}
 			break;
 
-		case HUB_FIL_CLOSE:
+		case HUB_FILE_CLOSE:
 			// Close file
 			if (lwin->hubFile[txData[1]].m_hFile != CFile::hFileNull) {
 				lwin->hubFile[txData[1]].Close();
@@ -3151,9 +3157,8 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 	lwin->mpLynx->ComLynxRxData(lwin->hubMouse[0]);
 	lwin->mpLynx->ComLynxRxData(lwin->hubMouse[1]);
 	lwin->mpLynx->ComLynxRxData(rxLen);
-	for (unsigned char i=0; i<rxLen; i++) {
+	for (unsigned char i=0; i<rxLen; i++)
 		lwin->mpLynx->ComLynxRxData(rxData[i]);
-	}
 	lwin->mpLynx->ComLynxRxData(checksum);
 
 	// Timeout packets
