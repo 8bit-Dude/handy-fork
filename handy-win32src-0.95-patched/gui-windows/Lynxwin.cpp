@@ -2671,8 +2671,8 @@ void CLynxWindow::HubPushPacket(unsigned char cmd, signed char slot, unsigned ch
 	packet->next = NULL;
 
 	// Assign ID & Timeout
-	if (++countID>15) { countID = 1; }
-	packet->ID = countID;
+	if (++packetID>15) { packetID = 1; }
+	packet->ID = packetID;
 	packet->timeout = (clock() * 1000) / CLOCKS_PER_SEC + HUB_TIMEOUT;
 
 	// Copy data to packet
@@ -2682,33 +2682,33 @@ void CLynxWindow::HubPushPacket(unsigned char cmd, signed char slot, unsigned ch
 	packet->data[1] = slot;
 	memcpy(&packet->data[2], data, len);
 
-	// Append packet at hubTail of linked list
-	if (!hubHead) {
-		hubHead = packet;
+	// Append packet at packetTail of linked list
+	if (!packetHead) {
+		packetHead = packet;
 	}
 	else {
-		packet_t *hubTail = hubHead;
-		while (hubTail->next != NULL) {
-			hubTail = hubTail->next;
+		packet_t *packetTail = packetHead;
+		while (packetTail->next != NULL) {
+			packetTail = packetTail->next;
 		}
-		hubTail->next = packet;
+		packetTail->next = packet;
 	}
 }
 
 void CLynxWindow::HubPopPacket(unsigned char ID) {
 	// Remove packet at head of linked list
-	if (hubHead && hubHead->ID == ID) {
-		packet_t* next = hubHead->next;
-		free(hubHead->data); 
-		free(hubHead);
-		hubHead = next;
+	if (packetHead && packetHead->ID == ID) {
+		packet_t* next = packetHead->next;
+		free(packetHead->data); 
+		free(packetHead);
+		packetHead = next;
 	}
 }
 
 void CLynxWindow::HubTimeoutPacket(void) {
 	// Remove packets that have exceeded timeout
-	while (hubHead && ((clock()*1000)/CLOCKS_PER_SEC) > hubHead->timeout) {
-		HubPopPacket(hubHead->ID);
+	while (packetHead && ((clock()*1000)/CLOCKS_PER_SEC) > packetHead->timeout) {
+		HubPopPacket(packetHead->ID);
 	}
 }
 
@@ -2720,10 +2720,9 @@ WSADATA wsaData;	// Used to open Windows connection
 
 void CLynxWindow::HubTxCallback(int data, ULONG objref)
 {
-	static unsigned char packetLen, rxLen, txLen, txData[256];
-	static unsigned char hasHeader, hasID, hasLen, txID = 0, rxID = 0;
-	static unsigned char* rxData;
-	unsigned char i;
+	static unsigned char rcvLen, comLen, comBuffer[256], hubLen, *hubBuffer;
+	static unsigned char hasHeader, hasID, hasLen, comID = 0, hubID = 0;
+	unsigned char checksum, i;
 
 	int socket_buffer_size = 65536;
 	u_long nonblocking_enabled = TRUE;
@@ -2740,24 +2739,24 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 
 	// Check ID
 	if (!hasID) {
-		txID = data;
+		comID = data;
 		hasID = 1; 
 		return;
 	}
 
 	// Check for length
 	if (!hasLen) {
-		packetLen = data;
+		comLen = data;
 		hasLen = 1;
-		txLen = 0;
+		rcvLen = 0;
 		return;
 	}
 
 	// Add data to buffer
-	txData[txLen++] = data;
+	comBuffer[rcvLen++] = data;
 
 	// Check if packet was fully received (including extra byte for checksum)
-	if (txLen <= packetLen) { return; }
+	if (rcvLen < comLen+1) { return; }
 
 	// Reset state
 	hasHeader = 0; 
@@ -2765,17 +2764,15 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 	hasLen = 0; 
 
 	// Verify checksum
-	unsigned char checksum = txID;
-	for (unsigned char i = 0; i<packetLen; i++) {
-		checksum += txData[i];
-	}
-	if (txData[packetLen] != checksum) { 
-		lwin->mHubBAD++;
-		return; 
+	checksum = comID;
+	for (unsigned char i = 0; i<comLen; i++)
+		checksum += comBuffer[i];
+	if (comBuffer[comLen] != checksum) {
+		lwin->mHubBAD++; return; 
 	}
 
 	// Try to pop last packet
-	lwin->HubPopPacket((txID >> 4));
+	lwin->HubPopPacket(comID >> 4);
 
 	// Process received data
 	unsigned int offset;
@@ -2784,12 +2781,12 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 	struct sockaddr_in webServer;
 	struct hostent *phe;
 	struct in_addr addr;
-	if (packetLen) {
+	if (comLen) {
 		// Record stats
 		lwin->mHubTX++;
 
 		// Check command code
-		switch (txData[0]) {
+		switch (comBuffer[0]) {
 		case HUB_SYS_RESET:
 			// Reset sockets
 			for (char i = 0; i < HUB_SLOTS; i++) {
@@ -2813,8 +2810,8 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			}
 
 			// Reset packets, files and counters
-			while (lwin->hubHead) {
-				lwin->HubPopPacket(lwin->hubHead->ID);
+			while (lwin->packetHead) {
+				lwin->HubPopPacket(lwin->packetHead->ID);
 			}
 			for (i = 0; i < HUB_FILES; i++) {
 				if (lwin->hubFile[i].m_hFile != CFile::hFileNull) {
@@ -2822,8 +2819,7 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 				}
 			}
 			lwin->mHubBAD = 0;
-			lwin->countID = 0;
-			rxID = 0;
+			lwin->packetID = 0;
 
 			// Get local ip address
 			lwin->localip = "\0";
@@ -2846,7 +2842,7 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			hFind = FindFirstFile(lwin->mRootPath + "microSD\\*.*", &FindData);	// .
 			FindNextFile(hFind, &FindData);										// ..
 			count = 0; len = 1;
-			while (count < txData[1] && FindNextFile(hFind, &FindData)) {
+			while (count < comBuffer[1] && FindNextFile(hFind, &FindData)) {
 				memcpy(&buffer[len], (unsigned char*)FindData.cFileName, strlen(FindData.cFileName));
 				len += strlen(FindData.cFileName);
 				buffer[len++] = 0;
@@ -2861,44 +2857,44 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 
 		case HUB_FILE_OPEN:
 			// Check if file was previously opened
-			if (lwin->hubFile[txData[1]].m_hFile != CFile::hFileNull) {
-				lwin->hubFile[txData[1]].Close();
+			if (lwin->hubFile[comBuffer[1]].m_hFile != CFile::hFileNull) {
+				lwin->hubFile[comBuffer[1]].Close();
 			}
 
 			// Open file (modes are 0:read, 1:write, 2:append)
-			filepath = lwin->mRootPath + "microSD\\" + &txData[3];
-			switch (txData[2]) {
+			filepath = lwin->mRootPath + "microSD\\" + &comBuffer[3];
+			switch (comBuffer[2]) {
 			case 0:
-				lwin->hubFile[txData[1]].Open(filepath, CFile::modeRead);
+				lwin->hubFile[comBuffer[1]].Open(filepath, CFile::modeRead);
 				break;
 			case 1:
-				lwin->hubFile[txData[1]].Open(filepath, CFile::modeCreate | CFile::modeWrite);
+				lwin->hubFile[comBuffer[1]].Open(filepath, CFile::modeCreate | CFile::modeWrite);
 				break;
 			case 2:
-				lwin->hubFile[txData[1]].Open(filepath, CFile::modeWrite);
-				lwin->hubFile[txData[1]].SeekToEnd();
+				lwin->hubFile[comBuffer[1]].Open(filepath, CFile::modeWrite);
+				lwin->hubFile[comBuffer[1]].SeekToEnd();
 				break;
 			}
 
 			// Send back file size
-			length = lwin->hubFile[txData[1]].GetLength();
+			length = lwin->hubFile[comBuffer[1]].GetLength();
 			memcpy(buffer, (char*)&length, 4);
-			lwin->HubPushPacket(HUB_FILE_OPEN, txData[1], buffer, 4);
+			lwin->HubPushPacket(HUB_FILE_OPEN, comBuffer[1], buffer, 4);
 			break;
 
 		case HUB_FILE_SEEK:
 			// Seek file position (offset from beginning)
-			offset = (txData[3] * 256) + txData[2];
-			if (lwin->hubFile[txData[1]].m_hFile != CFile::hFileNull) {
-				lwin->hubFile[txData[1]].Seek(offset, CFile::begin);
+			offset = (comBuffer[3] * 256) + comBuffer[2];
+			if (lwin->hubFile[comBuffer[1]].m_hFile != CFile::hFileNull) {
+				lwin->hubFile[comBuffer[1]].Seek(offset, CFile::begin);
 			}
 			break;
 
 		case HUB_FILE_READ:
 			// Read from file
-			slot = txData[1];
+			slot = comBuffer[1];
 			if (lwin->hubFile[slot].m_hFile != CFile::hFileNull) {
-				if ((len = lwin->hubFile[slot].Read(buffer, txData[2])) && len > 0) {
+				if ((len = lwin->hubFile[slot].Read(buffer, comBuffer[2])) && len > 0) {
 					lwin->HubPushPacket(HUB_FILE_READ, slot, buffer, len);
 				}
 			}
@@ -2906,24 +2902,24 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 
 		case HUB_FILE_WRITE:
 			// Write to file
-			if (lwin->hubFile[txData[1]].m_hFile != CFile::hFileNull) {
-				lwin->hubFile[txData[1]].Write(&txData[2], txLen - 3);
+			if (lwin->hubFile[comBuffer[1]].m_hFile != CFile::hFileNull) {
+				lwin->hubFile[comBuffer[1]].Write(&comBuffer[2], comLen - 3);
 			}
 			break;
 
 		case HUB_FILE_CLOSE:
 			// Close file
-			if (lwin->hubFile[txData[1]].m_hFile != CFile::hFileNull) {
-				lwin->hubFile[txData[1]].Close();
+			if (lwin->hubFile[comBuffer[1]].m_hFile != CFile::hFileNull) {
+				lwin->hubFile[comBuffer[1]].Close();
 			}
 			break;
 
 		case HUB_UDP_SLOT:
-			lwin->udpSlot = txData[1];
+			lwin->udpSlot = comBuffer[1];
 			break;
 
 		case HUB_TCP_SLOT:
-			lwin->tcpSlot = txData[1];
+			lwin->tcpSlot = comBuffer[1];
 			break;
 
 		case HUB_UDP_OPEN:
@@ -2945,17 +2941,17 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			// Set server settings
 			ZeroMemory(&lwin->udpServer[slot], sizeof(lwin->udpServer[slot]));
 			lwin->udpServer[slot].sin_family = AF_INET;
-			lwin->udpServer[slot].sin_addr.S_un.S_un_b.s_b1 = txData[1];
-			lwin->udpServer[slot].sin_addr.S_un.S_un_b.s_b2 = txData[2];
-			lwin->udpServer[slot].sin_addr.S_un.S_un_b.s_b3 = txData[3];
-			lwin->udpServer[slot].sin_addr.S_un.S_un_b.s_b4 = txData[4];
-			lwin->udpServer[slot].sin_port = htons(txData[5] + txData[6] * 256);
+			lwin->udpServer[slot].sin_addr.S_un.S_un_b.s_b1 = comBuffer[1];
+			lwin->udpServer[slot].sin_addr.S_un.S_un_b.s_b2 = comBuffer[2];
+			lwin->udpServer[slot].sin_addr.S_un.S_un_b.s_b3 = comBuffer[3];
+			lwin->udpServer[slot].sin_addr.S_un.S_un_b.s_b4 = comBuffer[4];
+			lwin->udpServer[slot].sin_port = htons(comBuffer[5] + comBuffer[6] * 256);
 
 			// Set client settings
 			memset((void *)&lwin->udpClient[slot], '\0', sizeof(struct sockaddr_in));
 			lwin->udpClient[slot].sin_family = AF_INET;
 			lwin->udpClient[slot].sin_addr.s_addr = htonl(INADDR_ANY);
-			lwin->udpClient[slot].sin_port = htons(txData[7] + txData[8] * 256);
+			lwin->udpClient[slot].sin_port = htons(comBuffer[7] + comBuffer[8] * 256);
 
 			// Bind local address to socket
 			if (bind(lwin->udpSocket[slot], (struct sockaddr*)&lwin->udpClient[slot], sizeof(lwin->udpClient[slot])) == -1) {
@@ -2981,11 +2977,11 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			// Set server settings
 			ZeroMemory(&lwin->tcpServer[slot], sizeof(lwin->tcpServer[slot]));
 			lwin->tcpServer[slot].sin_family = AF_INET;
-			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b1 = txData[1];
-			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b2 = txData[2];
-			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b3 = txData[3];
-			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b4 = txData[4];
-			lwin->tcpServer[slot].sin_port = htons(txData[5] + txData[6]*256);
+			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b1 = comBuffer[1];
+			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b2 = comBuffer[2];
+			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b3 = comBuffer[3];
+			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b4 = comBuffer[4];
+			lwin->tcpServer[slot].sin_port = htons(comBuffer[5] + comBuffer[6]*256);
 
 			// Try to connect
 			if (connect(lwin->tcpSocket[slot], (struct sockaddr *)&lwin->tcpServer[slot], sizeof(struct sockaddr_in)) < 0) {
@@ -3009,14 +3005,14 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 
 			// Set non-blocking and time-out
 			ioctlsocket(lwin->webSocket[0], FIONBIO, &nonblocking_enabled);
-			lwin->webTimeout = txData[3] + txData[4] * 256;
+			lwin->webTimeout = comBuffer[3] + comBuffer[4] * 256;
 			lwin->webBusy = false;
 
 			// Set server settings
 			ZeroMemory(&webServer, sizeof(webServer));
 			webServer.sin_family = AF_INET;
 			webServer.sin_addr.s_addr = inet_addr(lwin->localip);
-			webServer.sin_port = htons(txData[1] + txData[2] * 256);
+			webServer.sin_port = htons(comBuffer[1] + comBuffer[2] * 256);
 
 			// Bind and setup listener
 			if (bind(lwin->webSocket[0], (SOCKADDR *)&webServer, sizeof(webServer)) == SOCKET_ERROR) {
@@ -3041,7 +3037,7 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			slot = lwin->udpSlot;
 			if (lwin->udpSocket[slot] > 0) {
 				lwin->udpLen[slot] = sizeof(struct sockaddr_in);
-				if (sendto(lwin->udpSocket[slot], (char*)&txData[1], (int)(packetLen-1), 0, (struct sockaddr*)&lwin->udpServer[slot], lwin->udpLen[slot]) == -1) {
+				if (sendto(lwin->udpSocket[slot], (char*)&comBuffer[1], (int)(comLen-1), 0, (struct sockaddr*)&lwin->udpServer[slot], lwin->udpLen[slot]) == -1) {
 					closesocket(lwin->udpSocket[slot]);
 					lwin->udpSocket[slot] = 0;
 				}
@@ -3052,7 +3048,7 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			// Send packet to server
 			slot = lwin->tcpSlot;
 			if (lwin->tcpSocket[slot] > 0) {
-				if (send(lwin->tcpSocket[slot], (char*)&txData[1], (int)(packetLen-1), 0) == -1) {
+				if (send(lwin->tcpSocket[slot], (char*)&comBuffer[1], (int)(comLen-1), 0) == -1) {
 					closesocket(lwin->tcpSocket[slot]);
 					lwin->tcpSocket[slot] = 0;
 				}
@@ -3063,7 +3059,7 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			// Add header to contents
 			if (lwin->webSocket[1] > 0) {
 				memcpy((char*)&lwin->webTxBuffer[lwin->webTxLen], "HTTP/1.1 200 OK\r\nConnection: close\r\n", 36); lwin->webTxLen += 36;
-				memcpy((char*)&lwin->webTxBuffer[lwin->webTxLen], (char*)&txData[1], packetLen-1); lwin->webTxLen += (packetLen-1);
+				memcpy((char*)&lwin->webTxBuffer[lwin->webTxLen], (char*)&comBuffer[1], comLen-1); lwin->webTxLen += (comLen-1);
 				memcpy((char*)&lwin->webTxBuffer[lwin->webTxLen], (char*)"\r\n\r\n", 4); lwin->webTxLen += 4;
 				//send(lwin->webSocket[1], (char*)lwin->webTxBuffer, (int)lwin->webTxLen, 0);
 				//lwin->webTxLen = 0;
@@ -3073,7 +3069,7 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 		case HUB_WEB_BODY:
 			// Add body to contents
 			if (lwin->webSocket[1] > 0) {
-				memcpy((char*)&lwin->webTxBuffer[lwin->webTxLen], (char*)&txData[1], packetLen - 1); lwin->webTxLen += (packetLen - 1);
+				memcpy((char*)&lwin->webTxBuffer[lwin->webTxLen], (char*)&comBuffer[1], comLen - 1); lwin->webTxLen += (comLen - 1);
 				//send(lwin->webSocket[1], (char*)lwin->webTxBuffer, (int)lwin->webTxLen, 0);
 				//lwin->webTxLen = 0;
 			}
@@ -3120,20 +3116,20 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 	}
 
 	// Fetch next packet
-	packet_t *packet = lwin->hubHead;
+	packet_t *packet = lwin->packetHead;
 	if (packet) {
-		rxLen = packet->len;
-		rxData = packet->data;
-		rxID = packet->ID;
+		hubID = packet->ID;
+		hubLen = packet->len;
+		hubBuffer = packet->data;
 		lwin->mHubRX++;
 	}
 	else {
-		rxLen = 0;
+		hubLen = 0;
 	}
 
 	// Encode RX/TX ID
 	unsigned char packetID = 0;
-	packetID = (rxID << 4) + (txID & 0x0f);
+	packetID = (hubID << 4) + (comID & 0x0f);
 
 	// Compute Checksum
 	checksum = packetID;
@@ -3143,9 +3139,8 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 	checksum += lwin->hubJoys[3];
 	checksum += lwin->hubMouse[0];
 	checksum += lwin->hubMouse[1];
-	for (unsigned char i=0; i<rxLen; i++) {
-		checksum += rxData[i];
-	}
+	for (unsigned char i=0; i<hubLen; i++)
+		checksum += hubBuffer[i];
 
 	// Send Hub state
 	lwin->mpLynx->ComLynxRxData(170);
@@ -3156,9 +3151,9 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 	lwin->mpLynx->ComLynxRxData(lwin->hubJoys[3]);
 	lwin->mpLynx->ComLynxRxData(lwin->hubMouse[0]);
 	lwin->mpLynx->ComLynxRxData(lwin->hubMouse[1]);
-	lwin->mpLynx->ComLynxRxData(rxLen);
-	for (unsigned char i=0; i<rxLen; i++)
-		lwin->mpLynx->ComLynxRxData(rxData[i]);
+	lwin->mpLynx->ComLynxRxData(hubLen);
+	for (unsigned char i=0; i<hubLen; i++)
+		lwin->mpLynx->ComLynxRxData(hubBuffer[i]);
 	lwin->mpLynx->ComLynxRxData(checksum);
 
 	// Timeout packets

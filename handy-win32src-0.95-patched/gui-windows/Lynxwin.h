@@ -440,8 +440,8 @@ private:
 	// Hub management
 	unsigned char hubJoys[4] = { 255, 255, 255, 255 };
 	unsigned char hubMouse[2] = { 80, 100 };
-	packet_t* hubHead = NULL;
-	unsigned char countID = 0;
+	packet_t* packetHead = NULL;
+	unsigned char packetID = 0;
 	boolean socketReady = false;
 	char* localip;
 	struct sockaddr_in tcpServer[HUB_SLOTS], tcpClient[HUB_SLOTS];
