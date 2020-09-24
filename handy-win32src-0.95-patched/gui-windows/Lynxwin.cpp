@@ -1268,17 +1268,18 @@ void CLynxWindow::OnTimer(UINT nIDEvent)
 					len = recv(webSocket[1], (char*)buffer, 256, 0);
 					if (len > 0) {
 						for (unsigned int c=0; c<len; c++) {
-							if (buffer[c] == '\n' || buffer[c] == '\r') {
-								// Forward request?
+							if (buffer[c] == '\n') {
+								// Did we find the GET ... line?
 								if (!strncmp((char*)webRxBuffer, "GET", 3)) {
 									webRxBuffer[webRxLen++] = 0;
 									HubPushPacket(HUB_WEB_RECV, -1, webRxBuffer, webRxLen);
 									webBusy = true;
+									return;
 								}
 								webRxBuffer[0] = 0;
 								webRxLen = 0;
 							}
-							else {
+							else if (buffer[c] != '\r') {
 								webRxBuffer[webRxLen++] = buffer[c];
 							}
 						}
@@ -2778,9 +2779,9 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 	unsigned int offset;
 	unsigned long length;
 	unsigned char count, buffer[HUB_PACKET], slot, len=0;
-	struct sockaddr_in webServer;
-	struct hostent *phe;
+	struct sockaddr_in sockaddr;
 	struct in_addr addr;
+	struct hostent *phe;
 	if (comLen) {
 		// Record stats
 		lwin->mHubTX++;
@@ -2948,13 +2949,13 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			lwin->udpServer[slot].sin_port = htons(comBuffer[5] + comBuffer[6] * 256);
 
 			// Set client settings
-			memset((void *)&lwin->udpClient[slot], '\0', sizeof(struct sockaddr_in));
-			lwin->udpClient[slot].sin_family = AF_INET;
-			lwin->udpClient[slot].sin_addr.s_addr = htonl(INADDR_ANY);
-			lwin->udpClient[slot].sin_port = htons(comBuffer[7] + comBuffer[8] * 256);
+			memset((void *)&sockaddr, '\0', sizeof(struct sockaddr_in));
+			sockaddr.sin_family = AF_INET;
+			sockaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+			sockaddr.sin_port = htons(comBuffer[7] + comBuffer[8] * 256);
 
 			// Bind local address to socket
-			if (bind(lwin->udpSocket[slot], (struct sockaddr*)&lwin->udpClient[slot], sizeof(lwin->udpClient[slot])) == -1) {
+			if (bind(lwin->udpSocket[slot], (struct sockaddr*)&sockaddr, sizeof(sockaddr)) == -1) {
 				closesocket(lwin->udpSocket[slot]);
 				lwin->udpSocket[slot] = 0;
 				break;
@@ -2975,16 +2976,16 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			}
 
 			// Set server settings
-			ZeroMemory(&lwin->tcpServer[slot], sizeof(lwin->tcpServer[slot]));
-			lwin->tcpServer[slot].sin_family = AF_INET;
-			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b1 = comBuffer[1];
-			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b2 = comBuffer[2];
-			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b3 = comBuffer[3];
-			lwin->tcpServer[slot].sin_addr.S_un.S_un_b.s_b4 = comBuffer[4];
-			lwin->tcpServer[slot].sin_port = htons(comBuffer[5] + comBuffer[6]*256);
+			ZeroMemory(&sockaddr, sizeof(sockaddr));
+			sockaddr.sin_family = AF_INET;
+			sockaddr.sin_addr.S_un.S_un_b.s_b1 = comBuffer[1];
+			sockaddr.sin_addr.S_un.S_un_b.s_b2 = comBuffer[2];
+			sockaddr.sin_addr.S_un.S_un_b.s_b3 = comBuffer[3];
+			sockaddr.sin_addr.S_un.S_un_b.s_b4 = comBuffer[4];
+			sockaddr.sin_port = htons(comBuffer[5] + comBuffer[6]*256);
 
 			// Try to connect
-			if (connect(lwin->tcpSocket[slot], (struct sockaddr *)&lwin->tcpServer[slot], sizeof(struct sockaddr_in)) < 0) {
+			if (connect(lwin->tcpSocket[slot], (struct sockaddr *)&sockaddr, sizeof(struct sockaddr_in)) < 0) {
 				closesocket(lwin->tcpSocket[slot]);
 				lwin->tcpSocket[slot] = 0;
 				break;
@@ -3009,13 +3010,13 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 			lwin->webBusy = false;
 
 			// Set server settings
-			ZeroMemory(&webServer, sizeof(webServer));
-			webServer.sin_family = AF_INET;
-			webServer.sin_addr.s_addr = inet_addr(lwin->localip);
-			webServer.sin_port = htons(comBuffer[1] + comBuffer[2] * 256);
+			ZeroMemory(&sockaddr, sizeof(sockaddr));
+			sockaddr.sin_family = AF_INET;
+			sockaddr.sin_addr.s_addr = inet_addr(lwin->localip);
+			sockaddr.sin_port = htons(comBuffer[1] + comBuffer[2] * 256);
 
 			// Bind and setup listener
-			if (bind(lwin->webSocket[0], (SOCKADDR *)&webServer, sizeof(webServer)) == SOCKET_ERROR) {
+			if (bind(lwin->webSocket[0], (SOCKADDR *)&sockaddr, sizeof(sockaddr)) == SOCKET_ERROR) {
 				closesocket(lwin->webSocket[0]);
 				lwin->webSocket[0] = 0;
 				break;
@@ -3058,6 +3059,7 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 		case HUB_WEB_HEADER:
 			// Add header to contents
 			if (lwin->webSocket[1] > 0) {
+				lwin->webTxLen = 0;
 				memcpy((char*)&lwin->webTxBuffer[lwin->webTxLen], "HTTP/1.1 200 OK\r\nConnection: close\r\n", 36); lwin->webTxLen += 36;
 				memcpy((char*)&lwin->webTxBuffer[lwin->webTxLen], (char*)&comBuffer[1], comLen-1); lwin->webTxLen += (comLen-1);
 				memcpy((char*)&lwin->webTxBuffer[lwin->webTxLen], (char*)"\r\n\r\n", 4); lwin->webTxLen += 4;
@@ -3111,6 +3113,37 @@ void CLynxWindow::HubTxCallback(int data, ULONG objref)
 				closesocket(lwin->webSocket[1]);
 				lwin->webSocket[1] = 0;
 			}
+			break;
+
+		case HUB_HTTP_GET:
+			// Open TCP connection and make HTTP request
+			struct hostent *hp;
+			char request[128];
+
+			lwin->httpSocket = socket(AF_UNSPEC, SOCK_STREAM, IPPROTO_TCP);
+			if (lwin->httpSocket == INVALID_SOCKET) {
+				break;
+			}
+
+			if (gethostname((char*)&comBuffer[1], comLen - 1) == SOCKET_ERROR) break;
+			phe = gethostbyname((char*)&comBuffer[1]);
+			if (phe == 0) break;
+			i = 0; while (phe->h_addr_list[i] != 0)
+				memcpy(&addr, phe->h_addr_list[i++], sizeof(struct in_addr));
+			sockaddr.sin_port = htons(80);
+			sockaddr.sin_family = AF_INET;
+
+			if (connect(lwin->httpSocket, (struct sockaddr *)&sockaddr, sizeof(struct sockaddr_in)) == -1) {
+				break;
+			}
+
+			strcpy(request, "GET /\r\n");
+			send(lwin->httpSocket, (char*)request, (int)strlen(request), 0);
+			break;
+
+		case HUB_HTTP_READ:
+			char buffer[256];
+			len = recv(lwin->httpSocket, (char*)buffer, 256, 0);
 			break;
 		}
 	}

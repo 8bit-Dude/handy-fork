@@ -444,8 +444,7 @@ private:
 	unsigned char packetID = 0;
 	boolean socketReady = false;
 	char* localip;
-	struct sockaddr_in tcpServer[HUB_SLOTS], tcpClient[HUB_SLOTS];
-	struct sockaddr_in udpServer[HUB_SLOTS], udpClient[HUB_SLOTS];
+	struct sockaddr_in udpServer[HUB_SLOTS];
 	SOCKET tcpSocket[HUB_SLOTS] = { NULL };
 	SOCKET udpSocket[HUB_SLOTS] = { NULL };
 	int tcpLen[HUB_SLOTS], udpLen[HUB_SLOTS];
@@ -455,6 +454,7 @@ private:
 	unsigned int webRxLen, webTxLen, webTimeout;
 	boolean webBusy = false;
 	clock_t webTimer;
+	SOCKET httpSocket = NULL;
 	CFile hubFile[HUB_FILES];
 
 	// Hub timers
